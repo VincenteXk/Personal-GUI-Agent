@@ -1,0 +1,169 @@
+-Goal-
+Analyze a given example text and determine what classes and properties are needed in the graph/class/property system to represent the information in the example.
+
+-System Architecture Overview-
+This is a knowledge graph system with a hierarchical structure:
+
+**1. Entity (中心节点)**
+   - The main entity nodes in the graph
+   - Examples: "小红书", "微信", "我", "Alice", "Bob"
+   - Each entity has:
+     - name: Entity identifier
+     - description: What this entity is
+     - classes: List of classes this entity belongs to
+
+**2. Class (类)**
+   - Categories that define what aspects an entity can have
+   - Examples: "可启动应用", "可联系人", "购物平台", "信息流", "联系人"
+   - An entity can belong to multiple classes (composition pattern)
+   - Each class can have multiple properties
+
+**3. Property (属性)**
+   - Attributes of a class that describe specific characteristics
+   - Examples: "微信号", "小红书号", "启动方式", "偏好"
+   - Properties have two dimensions:
+     - required: Whether the property itself is mandatory for the class
+     - value_required: Whether the property value must be provided
+   - Properties can be:
+     - Required + Value Required: Must exist and have a value
+     - Required + Value Optional: Must exist but value can be empty
+     - Optional + Value Required: If exists, must have a value
+     - Optional + Value Optional: Completely optional
+
+**4. Property Value (属性值)**
+   - The actual value of a property for a specific entity instance
+   - Examples: "hymnly" (for 微信号), "点击应用图标" (for 启动方式)
+   - Values are entity-specific and class-specific
+
+**5. Class Node (类节点)**
+   - A specific aspect of an entity represented as an independent node
+   - Format: "entity_name:class_name"
+   - Examples: "小红书:购物平台", "小红书:可联系人", "微信:可联系人"
+   - Class nodes are automatically connected to their entity nodes
+   - Relationships can connect to:
+     - Entity nodes: For general relationships
+     - Class nodes: For class-specific relationships
+
+**6. Relationship (关系)**
+   - Connections between entities and/or class nodes
+   - Rules:
+     - Use class node if relationship is specific to that class aspect
+     - Use entity node if relationship is general
+   - Examples:
+     - "我 -> 小红书:购物平台" (buying on Xiaohongshu)
+     - "我 -> Alice" (friendship, general)
+
+-Analysis Methodology-
+To determine what classes and properties are needed, follow these steps:
+
+**Step 1: Identify Entities**
+- Extract all entities mentioned in the text
+- Note: Entities can be people, applications, platforms, objects, etc.
+
+**Step 2: Analyze Entity Characteristics**
+For each entity, identify:
+- What it is (its nature/type)
+- What it can do (capabilities/activities)
+- What attributes it has (specific values mentioned)
+
+**Step 3: Group Characteristics into Classes**
+- Look for common patterns across entities
+- Each distinct aspect/capability should be a class
+- Examples:
+  - If entities can be "launched" → "可启动应用" class
+  - If entities can be used for "contacting people" → "可联系人" class
+  - If entities are used for "shopping" → "购物平台" class
+
+**Step 4: Identify Properties for Each Class**
+For each class, identify:
+- What specific attributes are mentioned in the text
+- Whether these attributes are:
+  - Always present (required) or sometimes present (optional)
+  - Always have values (value_required) or can be empty (value_optional)
+
+**Step 5: Determine Relationships**
+- Identify connections between entities
+- Decide if relationship is:
+  - General → connect to entity node
+  - Class-specific → connect to class node
+
+-Example Analysis-
+Given this example text:
+"我在小红书上拥有自己的一个账号，我经常通过小红书查找美妆教程，以及Lolita衣服，同时我喜欢在上面购买衣服。我拥有一个微信，微信号为"hymnly"，我喜欢在上面和我的一个朋友"Alice"聊天，Alice的微信号未知（没有收集到的数据），但是他有一个小红书号，我们在小红书上也是朋友。我另有一个微信好友"Bob"他没有微信号。"
+
+**Step 1: Entities**
+- 我, 小红书, 微信, Alice, Bob
+
+**Step 2: Characteristics Analysis**
+- 我: 使用小红书（查找内容、购买、有账号）、使用微信（聊天、有微信号）
+- 小红书: 可以查找内容、可以购买、可以作为联系人平台
+- 微信: 可以聊天、可以作为联系人平台
+- Alice: 是朋友、有小红书号、微信号未知
+- Bob: 是朋友、没有微信号
+
+**Step 3: Classes Needed**
+- "可启动应用": Entities that can be launched (小红书, 微信)
+- "可联系人": Platforms/apps used for contacts (小红书, 微信)
+- "购物平台": Platforms used for shopping (小红书)
+- "信息流": Platforms used for browsing content (小红书)
+- "联系人": People who are contacts (Alice, Bob)
+
+**Step 4: Properties Needed**
+- "可启动应用":
+  - "启动方式" (required=True, value_required=True): How to launch
+- "可联系人":
+  - "微信号" (required=False, value_required=False): WeChat ID
+  - "小红书号" (required=False, value_required=False): Xiaohongshu ID
+- "购物平台":
+  - "偏好" (required=False, value_required=False): Shopping preferences
+- "信息流":
+  - No properties needed
+- "联系人":
+  - "关系类型" (required=False, value_required=False): Relationship type
+
+**Step 5: Key Relationships**
+- 我 -> 小红书:购物平台 (购买)
+- 我 -> 小红书:信息流 (查找内容)
+- 我 -> 小红书:可联系人 (有账号)
+- 我 -> 微信:可联系人 (有微信号"hymnly")
+- 我 -> Alice (朋友)
+- 我 -> Bob (朋友)
+- Alice -> 小红书:可联系人 (有小红书号)
+
+-Output Format-
+Provide your analysis in the following structured format:
+
+**1. Entities Identified:**
+- List all entities found in the example
+- Brief description of each
+
+**2. Classes Needed:**
+For each class, provide:
+- Class name
+- Description (what this class represents)
+- Which entities belong to this class
+
+**3. Properties Needed:**
+For each class, list all properties:
+- Property name
+- Required: Yes/No (whether property must exist)
+- Value Required: Yes/No (whether value must be provided)
+- Description (what this property represents)
+- Example values from the text (if any)
+
+**4. Relationships Pattern:**
+- List a few key relationship examples
+- Show the pattern of when to use entity nodes vs class nodes
+
+**5. System Summary:**
+- Summary of the overall system design
+- Key design decisions and rationale
+
+-Your Task-
+Analyze the following example text and determine what classes and properties are needed:
+
+Example Text:
+{example_text}
+
+######################
+Output:

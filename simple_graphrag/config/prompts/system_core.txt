@@ -1,0 +1,117 @@
+-System Overview-
+This is a knowledge graph system with a hierarchical structure.
+
+**IMPORTANT**: See system_rules.txt for complete rules and constraints including:
+- Base architecture definition
+- Entity "我" rules
+- Class naming rules (avoid generic classes like "可搜索内容")
+- Action-based class rules (passive by default)
+- System building and validation rules
+
+This document provides the core system structure:
+
+**1. Entity (中心节点)**
+   - The main entity nodes in the graph
+   - Examples: "小红书", "微信", "我", "Alice", "Bob"
+   - Each entity has:
+     - name: Entity identifier
+     - description: What this entity is
+     - classes: List of classes this entity belongs to
+
+**2. Class (类)**
+   - Categories that define what aspects an entity can have
+   - **CRITICAL RULE**: All classes represent either:
+     a) Relative attributes to "我" (the user): How entities relate to or interact with "我"
+     b) Objective attributes: Inherent characteristics of entities themselves
+   - **Action-based classes are PASSIVE**: Classes like "可启动应用" mean "applications that CAN BE launched (by 我)", not "entities that can launch"
+     - "可启动应用" = "可以被(我)启动的应用" (passive: applications that can be launched)
+     - "可联系人" = "可以被(我)用来联系人的平台" (passive: platforms that can be used for contacting)
+     - "购物平台" = "可以被(我)用来购物的平台" (relative to "我")
+   - **Default action subject is "我"**: All action-based classes implicitly assume "我" as the actor
+   - **MANDATORY "用户" CLASS**: The system MUST always include a "用户" class to represent "我" (the user)
+   - **"我" entity rules**: 
+     - "我" MUST belong to "用户" class (MANDATORY)
+     - "我" MUST NOT belong to action-based classes (e.g., "可启动应用", "可联系人", "购物平台") because "我" is the actor, not the object
+     - "我" can only belong to "用户" class and objective attribute classes (if any)
+   - Examples: "可启动应用" (applications that can be launched by 我), "可联系人" (platforms/apps for contacting by 我), "购物平台" (shopping platforms used by 我), "信息流" (information feed platforms), "联系人" (contacts), "用户" (user - MANDATORY)
+   - An entity can belong to multiple classes (composition pattern)
+   - Each class can have multiple properties
+
+**3. Property (属性)**
+   - Attributes of a class that describe specific characteristics
+   - Examples: "微信号", "小红书号", "启动方式", "偏好"
+   - Properties have two dimensions:
+     - required: Whether the property itself is mandatory for the class
+     - value_required: Whether the property value must be provided
+   - Properties can be:
+     - Required + Value Required: Must exist and have a value
+     - Required + Value Optional: Must exist but value can be empty
+     - Optional + Value Required: If exists, must have a value
+     - Optional + Value Optional: Completely optional
+
+**4. Property Value (属性值)**
+   - The actual value of a property for a specific entity instance
+   - Examples: "hymnly" (for 微信号), "点击应用图标" (for 启动方式)
+   - Values are entity-specific and class-specific
+
+**5. Class Node (类节点)**
+   - A specific aspect of an entity represented as an independent node
+   - Format: "entity_name:class_name"
+   - Examples: "小红书:购物平台", "小红书:可联系人", "微信:可联系人"
+   - Class nodes are automatically connected to their entity nodes
+   - Relationships can connect to:
+     - Entity nodes: For general relationships
+     - Class nodes: For class-specific relationships
+
+**6. Relationship (关系)**
+   - Connections between entities and/or class nodes
+   - Rules:
+     - Use class node if relationship is specific to that class aspect
+     - Use entity node if relationship is general
+   - Examples:
+     - "我 -> 小红书:购物平台" (buying on Xiaohongshu)
+     - "我 -> Alice" (friendship, general)
+
+-Analysis Methodology-
+To determine what classes and properties are needed, follow these steps:
+
+**Step 1: Identify Entities**
+- Extract all entities mentioned in the text
+- Note: Entities can be people, applications, platforms, objects, etc.
+
+**Step 2: Analyze Entity Characteristics**
+For each entity, identify:
+- What it is (its nature/type)
+- What it can do (capabilities/activities)
+- What attributes it has (specific values mentioned)
+
+**Step 3: Group Characteristics into Classes**
+- Look for common patterns across entities
+- Each distinct aspect/capability should be a class
+- **CRITICAL RULES**:
+  - **MANDATORY "用户" CLASS**: The system MUST always include a "用户" class
+  - Action-based classes are PASSIVE: They describe what CAN BE DONE TO entities by "我"
+  - "可启动应用" means "applications that CAN BE launched (by 我)", not "entities that launch"
+  - "可联系人" means "platforms/apps that CAN BE used for contacting (by 我)", not "entities that contact"
+  - "购物平台" means "platforms that CAN BE used for shopping (by 我)", not "entities that shop"
+  - "我" entity MUST have "用户" class (MANDATORY) and MUST NOT have action-based classes
+  - Action-based classes describe entities that are ACTED UPON by "我", not entities that perform actions
+- Examples:
+  - "我" entity → "用户" class (MANDATORY - the actor/user)
+  - If entities can be "launched by 我" → "可启动应用" class (passive: entities that can be launched)
+  - If entities can be used by "我" for "contacting people" → "可联系人" class (passive: platforms for contacting)
+  - If entities are used by "我" for "shopping" → "购物平台" class (relative to "我")
+  - If entities are people → "联系人" class (objective attribute)
+
+**Step 4: Identify Properties for Each Class**
+For each class, identify:
+- What specific attributes are mentioned in the text
+- Whether these attributes are:
+  - Always present (required) or sometimes present (optional)
+  - Always have values (value_required) or can be empty (value_optional)
+
+**Step 5: Determine Relationships**
+- Identify connections between entities
+- Decide if relationship is:
+  - General → connect to entity node
+  - Class-specific → connect to class node

@@ -1,0 +1,158 @@
+{core_prompt}
+
+{rules_prompt}
+
+-Goal-
+Given an existing system configuration (which includes the base architecture) and a new example text, determine if the existing system can adequately represent the information in the example. If there are significant gaps or missing information that cannot be represented, provide an updated system configuration.
+
+**IMPORTANT**: 
+- The existing system already includes the base architecture
+- When extending, preserve ALL existing classes (including base architecture) and add new classes
+- The base architecture (especially "用户" class) MUST always be present
+- Follow all rules (avoid generic classes, action classes are passive, etc.)
+
+-Existing System Configuration-
+```yaml
+{existing_system}
+```
+
+-STRICT VALIDATION PROCESS-
+You MUST follow this step-by-step process:
+
+**STEP 1: Sentence-by-Sentence Analysis**
+Before validating, you MUST analyze the new example text sentence by sentence:
+1. Split the example text into individual sentences
+2. For EACH sentence, ask yourself:
+   - Is this sentence containing IMPORTANT information or MARGINAL information?
+   - Important information: Core facts, entities, relationships, attributes that define the system
+   - Marginal information: Redundant details, decorative language, non-essential context
+3. Mark each sentence as "IMPORTANT" or "MARGINAL"
+4. Focus ONLY on IMPORTANT sentences for validation
+
+**STEP 2: Information Extraction from Important Sentences**
+From the IMPORTANT sentences only, extract:
+- All entities mentioned
+- All characteristics/attributes of entities
+- All relationships between entities
+- All specific values mentioned
+
+**STEP 3: Coverage Check for Each Important Sentence**
+For EACH IMPORTANT sentence, check:
+1. Can the entities in this sentence be classified using existing classes?
+2. Can the characteristics/attributes in this sentence be represented using existing properties?
+3. Can the relationships in this sentence be expressed using existing classes?
+4. Mark each sentence as:
+   - "COVERED": All information can be represented by existing system
+   - "PARTIALLY_COVERED": Some information can be represented, but some is missing
+   - "NOT_COVERED": Significant information cannot be represented
+
+**STEP 4: Gap Analysis**
+Identify what is missing:
+- What entities cannot be properly classified?
+- What attributes cannot be represented?
+- What relationships cannot be expressed?
+- Are these gaps IMPORTANT (core to the example) or MARGINAL (nice-to-have)?
+
+**STEP 5: System Extension Decision**
+- If ALL IMPORTANT sentences are COVERED: System is adequate
+- If ANY IMPORTANT sentence is NOT_COVERED or PARTIALLY_COVERED with important gaps: System needs extension
+- Only extend the system for IMPORTANT gaps, ignore MARGINAL gaps
+
+-Validation Criteria-
+The existing system is considered adequate if:
+1. **MANDATORY**: The system includes "用户" class (if missing, system needs extension)
+2. All entities mentioned in the example can be properly classified using existing classes
+3. All important attributes mentioned in the example can be represented using existing properties
+4. All relationships can be properly expressed using existing classes
+5. **CRITICAL**: "我" entity can be classified as "用户" class (not action-based classes)
+
+The system needs to be extended if:
+1. **MANDATORY**: "用户" class is missing (must add it)
+2. There are entities with characteristics that don't fit any existing class
+3. There are important attributes mentioned that cannot be represented with existing properties
+4. There are relationship patterns that require new classes or properties
+5. **CRITICAL**: "我" entity cannot be properly classified (must ensure "用户" class exists)
+
+-Output Format-
+If the existing system is adequate, output:
+```yaml
+status: adequate
+message: "The existing system can fully represent the information in the example."
+```
+
+If the system needs to be extended, output:
+```yaml
+status: needs_extension
+message: "Brief explanation of what is missing"
+classes:
+  # MANDATORY: Always include "用户" class
+  用户:
+    description: "用户本人，执行操作的主体"
+    properties: []
+  # Include ALL classes (existing + new)
+  ExistingClassName1:
+    description: "Keep existing description or update if needed"
+    properties:
+      # Include all existing properties, add new ones if needed
+      - name: "existing_property"
+        required: true/false
+        value_required: true/false
+        description: "Keep or update description"
+      - name: "new_property"
+        required: true/false
+        value_required: true/false
+        description: "New property description"
+  NewClassName:
+    description: "Description of new class"
+    properties:
+      - name: "property_name"
+        required: true/false
+        value_required: true/false
+        description: "Property description"
+```
+
+-Important Notes-
+1. **MANDATORY**: The system MUST always include "用户" class. If it's missing, add it.
+2. When extending the system, preserve all existing classes and properties
+3. Only add new classes/properties that are actually needed
+4. Update existing classes/properties only if necessary (e.g., if a property should be required but wasn't)
+5. Be specific about required/value_required settings
+6. Provide clear descriptions for new or updated elements
+7. Use Chinese for class names and property names
+8. **CRITICAL**: Action-based classes are PASSIVE - they describe entities that can be acted upon by "我", not entities that perform actions
+9. **CRITICAL**: "我" entity MUST belong to "用户" class and MUST NOT belong to action-based classes like "可启动应用", "可联系人", etc.
+10. Remember: "可启动应用" = "可以被(我)启动的应用" (passive), so "我" cannot belong to this class
+
+-Your Task-
+Validate the existing system against the new example step by step, following the STRICT VALIDATION PROCESS above.
+
+New Example Text:
+{example_text}
+
+######################
+Output Format:
+Please provide your analysis in the following format:
+
+**Stage 1: Sentence-by-Sentence Analysis**
+[Sentence 1]: [IMPORTANT/MARGINAL] - [Reasoning]
+[Sentence 2]: [IMPORTANT/MARGINAL] - [Reasoning]
+...
+
+**Stage 2: Important Information Extraction**
+[List all important information extracted from IMPORTANT sentences]
+
+**Stage 3: Coverage Check**
+[Sentence 1]: [COVERED/PARTIALLY_COVERED/NOT_COVERED] - [Which parts can/cannot be represented]
+[Sentence 2]: [COVERED/PARTIALLY_COVERED/NOT_COVERED] - [Which parts can/cannot be represented]
+...
+
+**Stage 4: Gap Analysis**
+[List all gaps found, marking IMPORTANT vs MARGINAL]
+
+**Stage 5: Decision and System Configuration**
+[Status: adequate/needs_extension]
+[Reasoning]
+
+```yaml
+[YAML output here - only if needs_extension]
+```

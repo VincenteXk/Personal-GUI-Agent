@@ -1,0 +1,137 @@
+-System Architecture and Rules-
+This document defines the core architecture, rules, and constraints for the knowledge graph system.
+
+**1. Base Architecture (基础架构)**
+The system is built on a base architecture defined in the configuration file (config.yaml).
+
+- **Mandatory Classes (必需类)**:
+  - 用户: The user entity ("我") - MANDATORY, always exists in the system
+    - This class is always present in the base architecture
+
+- **Base Classes (基础类)**:
+  - The base architecture includes a set of predefined classes (e.g., 可启动应用, 购物平台, 信息流, 视频平台, 交流平台, 现实物品, 信息记录)
+  - These classes are defined in config.yaml under `base_system.classes`
+  - Each class may have properties defined in the configuration
+
+- **Base Entities (基础实体)**:
+  - The base architecture includes a set of predefined entities with their class assignments
+  - These entities are defined in config.yaml under `base_system.base_entities`
+  - Each base entity has a name, description, and a list of classes it belongs to
+  - Base entities are always available and can be referenced in relationships and extractions
+
+**Note**: The specific base classes and entities are configured in config.yaml and will be provided in the system configuration context. Always respect the base architecture when building or extending the system.
+
+**2. Core Concepts (核心概念)**
+
+**Entity (实体)**
+- The main entity nodes in the graph
+- Examples: "小红书", "微信", "我", "Alice", "Bob"
+- Each entity has: name, description, classes
+
+**Class (类)**
+- Categories that define what aspects an entity can have
+- **CRITICAL RULE**: All classes represent either:
+  a) Relative attributes to "我" (the user): How entities relate to or interact with "我"
+  b) Objective attributes: Inherent characteristics of entities themselves
+
+**Action-based Classes (动作类)**
+- **PASSIVE by default**: Action-based classes describe what CAN BE DONE TO entities by "我"
+- Examples:
+  - "可启动应用" = "可以被(我)启动的应用" (passive: applications that can be launched)
+  - "可联系人" = "可以被(我)用来联系人的平台" (passive: platforms for contacting)
+  - "购物平台" = "可以被(我)用来购物的平台" (relative to "我")
+- **Default action subject is "我"**: All action-based classes implicitly assume "我" as the actor
+
+**3. Entity "我" Rules (实体"我"的规则)**
+
+**MANDATORY Rules:**
+- "我" MUST always be extracted as an entity if present in the text
+- "我" MUST belong to "用户" class (MANDATORY)
+- "我" MUST NOT belong to action-based classes (e.g., "可启动应用", "可联系人", "购物平台")
+- Reason: "我" is the actor, not the object. Action-based classes describe entities that are ACTED UPON by "我"
+
+**Allowed Classes for "我":**
+- "用户" (MANDATORY)
+- Objective attribute classes only (if any exist)
+
+**4. Class Naming Rules (类命名规则)**
+
+**AVOID Generic Action Classes:**
+- ❌ "可搜索内容" - Everything is searchable, too generic
+- ❌ "可查看内容" - Everything can be viewed, too generic
+- ❌ "可使用工具" - Too generic, use specific tool classes instead
+
+**USE Specific Classes:**
+- ✅ "搜索工具" - Specific tool for searching
+- ✅ "信息流" - Specific platform type for information
+- ✅ "购物平台" - Specific platform type for shopping
+- ✅ "可启动应用" - Specific: applications that can be launched
+
+**5. System Building Rules (系统构建规则)**
+
+**Base Architecture First:**
+- Always start with the base architecture (mandatory "用户" class)
+- All operations (building, extending, validating) work on top of this base
+- New classes are added to the base, not replacing it
+
+**Class Design Principles:**
+1. Classes should be specific, not generic
+2. Action-based classes are passive (describe what can be done TO entities)
+3. Avoid classes that apply to everything (e.g., "可搜索", "可查看")
+4. Focus on relative attributes to "我" or objective attributes
+
+**6. Validation Rules (验证规则)**
+
+**System Adequacy Check:**
+- System is adequate if:
+  1. "用户" class exists (MANDATORY)
+  2. All entities can be properly classified
+  3. All important attributes can be represented
+  4. "我" entity can be classified as "用户" (not action-based classes)
+
+**System Extension:**
+- Extend system if:
+  1. "用户" class is missing (must add it)
+  2. Entities cannot be properly classified
+  3. Important attributes cannot be represented
+  4. "我" entity cannot be properly classified
+
+**7. Extraction Rules (提取规则)**
+
+**Entity Extraction:**
+- Extract all entities mentioned in the text
+- "我" MUST be extracted if present
+- Each entity gets appropriate classes based on the rules above
+
+**Class Assignment:**
+- Assign classes based on entity characteristics
+- "我" → "用户" class (MANDATORY)
+- Other entities → appropriate classes (action-based or objective)
+- Never assign action-based classes to "我"
+
+**Relationship Extraction:**
+- Extract relationships between entities
+- "我" can be the source of relationships
+- Use class nodes for class-specific relationships
+- Use entity nodes for general relationships
+
+**8. Examples (示例)**
+
+**Correct Class Assignment:**
+- "我" → "用户" ✅
+- "小红书" → "可启动应用", "信息流", "购物平台" ✅
+- "微信" → "可启动应用", "可联系人" ✅
+- "Alice" → "联系人" ✅
+
+**Incorrect Class Assignment:**
+- "我" → "可启动应用" ❌ (我 is the actor, not the object)
+- "我" → "可联系人" ❌ (我 is the actor, not the object)
+- "小红书" → "可搜索内容" ❌ (too generic, everything is searchable)
+
+**9. Base System Configuration (基础系统配置)**
+
+The base system configuration is defined in config.yaml under `base_system`:
+- Base classes are defined under `base_system.classes`
+- Base entities are defined under `base_system.base_entities`
+
+This base configuration is always present and serves as the foundation for all operations. All new classes and entities are added to this base, not replacing it. The specific base classes and entities will be provided in the system configuration context when building or extending the system.
