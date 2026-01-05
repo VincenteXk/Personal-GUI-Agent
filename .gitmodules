@@ -1,0 +1,3 @@
+[submodule "graphrag"]
+	path = graphrag
+	url = https://github.com/hymnly133/personalUI

@@ -1,0 +1,9 @@
+{
+  "api_key": "5c548a94d1f641cd80238cebc5bb0422.Az50KakhJPjgi1og",
+  "model": "glm-4.1v-thinking-flash",
+  "output_dir": "data",
+  "background_check_interval": 60,
+  "analysis_interval": 300,
+  "max_screenshots_per_analysis": 5,
+  "log_level": "INFO"
+}
