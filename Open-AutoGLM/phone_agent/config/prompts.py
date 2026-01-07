@@ -49,6 +49,8 @@ SYSTEM_PROMPT = (
     Home是回到系统桌面的操作，相当于按下 Android 主屏幕按钮。使用此操作可退出当前应用并返回启动器，或从已知状态启动新任务。此操作完成后，您将自动收到结果状态的截图。
 - do(action="Wait", duration="x seconds")  
     等待页面加载，x为需要等待多少秒。
+- do(action="Ask", question="xxx")  
+    Ask是向用户提问并获取语音回答的操作，用于需要用户语音输入的场景，question是需要向用户询问的问题。
 - finish(message="xxx")  
     finish是结束任务的操作，表示准确完整完成任务，message是终止信息。 
 

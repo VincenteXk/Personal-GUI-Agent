@@ -1,13 +1,6 @@
 """Device factory for ADB-only Android device support."""
 
-from enum import Enum
 from typing import Any
-
-
-class DeviceType(Enum):
-    """Type of device connection tool."""
-
-    ADB = "adb"
 
 
 class DeviceFactory:
@@ -17,16 +10,10 @@ class DeviceFactory:
     This system works exclusively with Android devices via ADB.
     """
 
-    def __init__(self, device_type: DeviceType = DeviceType.ADB):
+    def __init__(self):
         """
         Initialize the device factory.
-
-        Args:
-            device_type: The type of device to use (only ADB supported).
         """
-        if device_type != DeviceType.ADB:
-            raise ValueError("Only ADB device type is supported. iOS and HarmonyOS support has been removed.")
-        self.device_type = device_type
         self._module = None
 
     @property
@@ -127,19 +114,6 @@ class DeviceFactory:
 _device_factory: DeviceFactory | None = None
 
 
-def set_device_type(device_type: DeviceType):
-    """
-    Set the global device type.
-
-    Args:
-        device_type: The device type to use (only ADB supported).
-    """
-    global _device_factory
-    if device_type != DeviceType.ADB:
-        raise ValueError("Only ADB device type is supported.")
-    _device_factory = DeviceFactory(device_type)
-
-
 def get_device_factory() -> DeviceFactory:
     """
     Get the global device factory instance.
@@ -149,5 +123,5 @@ def get_device_factory() -> DeviceFactory:
     """
     global _device_factory
     if _device_factory is None:
-        _device_factory = DeviceFactory(DeviceType.ADB)
+        _device_factory = DeviceFactory()
     return _device_factory

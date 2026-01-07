@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from phone_agent.config.timing import TIMING_CONFIG
 from phone_agent.device_factory import get_device_factory
+from phone_agent.voice import VoiceAssistant
 
 
 @dataclass
@@ -104,6 +105,7 @@ class ActionHandler:
             "Note": self._handle_note,
             "Call_API": self._handle_call_api,
             "Interact": self._handle_interact,
+            "Ask": self._handle_ask,
         }
         return handlers.get(action_name)
 
@@ -254,6 +256,20 @@ class ActionHandler:
         """Handle interaction request (user choice needed)."""
         # This action signals that user input is needed
         return ActionResult(True, False, message="User interaction required")
+
+    def _handle_ask(self, action: dict, width: int, height: int) -> ActionResult:
+        """Handle ask action - ask user a question and get response."""
+        question = action.get("question", "")
+        if not question:
+            return ActionResult(False, False, "No question provided for ask action")
+
+        try:
+            # Initialize VoiceAssistant and ask the question
+            voice_assistant = VoiceAssistant()
+            user_response = voice_assistant.ask(question)
+            return ActionResult(True, False, message=f"User response: {user_response}")
+        except Exception as e:
+            return ActionResult(False, False, message=f"Ask action failed: {e}")
 
     def _send_keyevent(self, keycode: str) -> None:
         """Send a keyevent to the device."""

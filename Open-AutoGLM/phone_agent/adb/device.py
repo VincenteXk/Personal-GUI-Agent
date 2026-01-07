@@ -1,11 +1,28 @@
-"""Device control utilities for Android automation."""
+"""Android device control module using ADB."""
 
 import os
 import subprocess
 import time
-from typing import List, Optional, Tuple
+import cv2
+import numpy as np
+from typing import Tuple, List, Optional
+import base64
+import sys
+import logging
 
-from phone_agent.config.apps import APP_PACKAGES
+# 尝试使用相对导入，如果失败则使用绝对导入
+try:
+    from ...shared_config import APP_NAME_TO_PACKAGE
+except ImportError:
+    # 如果相对导入失败，尝试从根目录导入
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+    from shared_config import APP_NAME_TO_PACKAGE
+
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 from phone_agent.config.timing import TIMING_CONFIG
 
 
@@ -31,7 +48,7 @@ def get_current_app(device_id: str | None = None) -> str:
     # Parse window focus info
     for line in output.split("\n"):
         if "mCurrentFocus" in line or "mFocusedApp" in line:
-            for app_name, package in APP_PACKAGES.items():
+            for app_name, package in APP_NAME_TO_PACKAGE.items():
                 if package in line:
                     return app_name
 
@@ -222,11 +239,11 @@ def launch_app(
     if delay is None:
         delay = TIMING_CONFIG.device.default_launch_delay
 
-    if app_name not in APP_PACKAGES:
+    if app_name not in APP_NAME_TO_PACKAGE:
         return False
 
     adb_prefix = _get_adb_prefix(device_id)
-    package = APP_PACKAGES[app_name]
+    package = APP_NAME_TO_PACKAGE[app_name]
 
     subprocess.run(
         adb_prefix

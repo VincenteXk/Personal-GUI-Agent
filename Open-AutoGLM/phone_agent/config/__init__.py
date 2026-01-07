@@ -1,8 +1,30 @@
 """Configuration module for Phone Agent."""
 
-from phone_agent.config.apps import APP_PACKAGES
-from phone_agent.config.apps_harmonyos import APP_PACKAGES as APP_PACKAGES_HARMONYOS
-from phone_agent.config.apps_ios import APP_PACKAGES_IOS
+"""Configuration package for phone agent."""
+
+import sys
+import os
+
+# 尝试使用相对导入，如果失败则使用绝对导入
+try:
+    from ...shared_config import APP_PACKAGE_MAPPINGS as APP_PACKAGES
+except ImportError:
+    # 如果相对导入失败，尝试从根目录导入
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+    from shared_config import APP_PACKAGE_MAPPINGS as APP_PACKAGES
+
+from .apps import get_app_name, get_package_name, list_supported_apps
+from .prompts import SYSTEM_PROMPT
+from .timing import TIMING_CONFIG
+
+__all__ = [
+    'APP_PACKAGES',
+    'get_app_name',
+    'get_package_name',
+    'list_supported_apps',
+    'SYSTEM_PROMPT',
+    'TIMING_CONFIG'
+]
 from phone_agent.config.i18n import get_message, get_messages
 from phone_agent.config.prompts_en import SYSTEM_PROMPT as SYSTEM_PROMPT_EN
 from phone_agent.config.prompts_zh import SYSTEM_PROMPT as SYSTEM_PROMPT_ZH
@@ -37,8 +59,6 @@ SYSTEM_PROMPT = SYSTEM_PROMPT_ZH
 
 __all__ = [
     "APP_PACKAGES",
-    "APP_PACKAGES_HARMONYOS",
-    "APP_PACKAGES_IOS",
     "SYSTEM_PROMPT",
     "SYSTEM_PROMPT_ZH",
     "SYSTEM_PROMPT_EN",

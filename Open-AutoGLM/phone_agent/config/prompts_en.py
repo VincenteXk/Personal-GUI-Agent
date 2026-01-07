@@ -63,6 +63,12 @@ Your output should STRICTLY follow the format:
   <answer>
   do(action="Back")
   </answer>
+- **Ask**
+  Ask the user a question and get a voice response. Used for scenarios requiring user voice input, with question being the query to ask the user.
+  **Example**:
+  <answer>
+  do(action="Ask", question="What is your name?")
+  </answer>
 - **Finish**
   Terminate the program and optionally print a message.
   **Example**:
