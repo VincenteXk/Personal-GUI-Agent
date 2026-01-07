@@ -30,7 +30,7 @@ CHUNK = 1024
 VAD_MODE = 3
 
 # API配置
-API_KEY = "sk-cd1cfeb5f1874d4cb89b2430a7c8ca5b"
+API_KEY = ""
 BASE_URL = "https://api.deepseek.com"
 
 
