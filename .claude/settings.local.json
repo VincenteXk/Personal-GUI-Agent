@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(cat:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(for:*)",
+      "Bash(do python -m py_compile:*)",
+      "Bash(done)",
+      "Bash(findstr:*)",
+      "Bash(find:*)"
+    ]
+  }
+}

@@ -6,16 +6,19 @@
 import os
 import sys
 import json
+import time
 from typing import Dict, Any, List, Optional
 
 # 添加子模块路径
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'graphrag'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'learning_mode'))
 
 # 导入graphrag相关模块
 from graphrag.simple_graphrag.simplegraph import SimpleGraph
 
 # 导入本地模块
 from knowledge_base import KnowledgeBase
+from utils import run_async
 
 
 class InstructionRefiner:
@@ -62,18 +65,16 @@ class InstructionRefiner:
         graphrag_habits = []
         if self.graphrag:
             try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                
+                async def _do_query():
+                    return await self.graphrag.query(task)
+
                 # 查询相关习惯
-                query_result = loop.run_until_complete(self.graphrag.query(task))
-                
+                query_result = run_async(_do_query())
+
                 if query_result and 'results' in query_result:
                     for item in query_result['results'][:5]:
                         graphrag_habits.append(item.get('text', ''))
-                
-                loop.close()
+
             except Exception as e:
                 print(f"从GraphRAG查询失败: {e}")
         

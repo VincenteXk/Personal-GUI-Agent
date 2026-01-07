@@ -8,14 +8,16 @@ import sys
 import time
 import json
 import networkx as nx
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass
 
 # 添加子模块路径
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'graphrag'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'learning_mode'))
 
 # 导入graphrag相关模块
 from graphrag.simple_graphrag.simplegraph import SimpleGraph
+from utils import run_async
 
 
 @dataclass
@@ -83,13 +85,16 @@ class KnowledgeBase:
         except Exception as e:
             print(f"⚠️ 本地知识库保存失败: {e}")
     
-    def add_interaction(self, interaction: UserInteraction):
+    def add_interaction(self, interaction: Union[UserInteraction, Dict]):
         """
         添加用户交互数据
-        
+
         Args:
-            interaction: 用户交互数据
+            interaction: 用户交互数据（支持 UserInteraction dataclass 或 Dict）
         """
+        # 兼容 Dict 输入
+        if isinstance(interaction, dict):
+            interaction = UserInteraction(**interaction)
         # 创建应用节点
         app_node = f"app:{interaction.app}"
         if not self.graph.has_node(app_node):
@@ -131,71 +136,67 @@ class KnowledgeBase:
     def _add_to_graphrag(self, interaction: UserInteraction):
         """
         将交互数据添加到GraphRAG
-        
+
         Args:
             interaction: 用户交互数据
         """
         try:
-            import asyncio
-            
-            # 构建实体和关系
-            entities = [
-                {"name": interaction.app, "type": "Application", "description": f"应用: {interaction.app}"},
-                {"name": interaction.action, "type": "Action", "description": f"操作: {interaction.action}"}
-            ]
-            
-            # 如果有意图，添加意图实体
-            if interaction.intent:
-                entities.append({
-                    "name": interaction.intent, 
-                    "type": "Intent", 
-                    "description": f"意图: {interaction.intent}"
-                })
-            
-            # 构建关系
-            relations = [
-                {"source": interaction.app, "target": interaction.action, "description": "执行操作"}
-            ]
-            
-            # 如果有意图，添加意图关系
-            if interaction.intent:
-                relations.append({
-                    "source": interaction.action, 
-                    "target": interaction.intent, 
-                    "description": "表达意图"
-                })
-            
-            # 异步添加到GraphRAG
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # 添加实体和关系
-            for entity in entities:
-                loop.run_until_complete(self.graphrag.add_entity(entity))
-            
-            for relation in relations:
-                loop.run_until_complete(self.graphrag.add_relation(relation))
-            
-            # 添加交互记录作为文档
-            doc_text = f"在{interaction.app}应用中执行{interaction.action}操作"
-            if interaction.intent:
-                doc_text += f"，意图为{interaction.intent}"
-            
-            doc = {
-                "text": doc_text,
-                "metadata": {
-                    "timestamp": interaction.timestamp,
-                    "app": interaction.app,
-                    "action": interaction.action,
-                    "intent": interaction.intent
+            async def _do_async_work():
+                # 构建实体和关系
+                entities = [
+                    {"name": interaction.app, "type": "Application", "description": f"应用: {interaction.app}"},
+                    {"name": interaction.action, "type": "Action", "description": f"操作: {interaction.action}"}
+                ]
+
+                # 如果有意图，添加意图实体
+                if interaction.intent:
+                    entities.append({
+                        "name": interaction.intent,
+                        "type": "Intent",
+                        "description": f"意图: {interaction.intent}"
+                    })
+
+                # 构建关系
+                relations = [
+                    {"source": interaction.app, "target": interaction.action, "description": "执行操作"}
+                ]
+
+                # 如果有意图，添加意图关系
+                if interaction.intent:
+                    relations.append({
+                        "source": interaction.action,
+                        "target": interaction.intent,
+                        "description": "表达意图"
+                    })
+
+                # 添加实体和关系
+                for entity in entities:
+                    await self.graphrag.add_entity(entity)
+
+                for relation in relations:
+                    await self.graphrag.add_relation(relation)
+
+                # 添加交互记录作为文档
+                doc_text = f"在{interaction.app}应用中执行{interaction.action}操作"
+                if interaction.intent:
+                    doc_text += f"，意图为{interaction.intent}"
+
+                doc = {
+                    "text": doc_text,
+                    "metadata": {
+                        "timestamp": interaction.timestamp,
+                        "app": interaction.app,
+                        "action": interaction.action,
+                        "intent": interaction.intent
+                    }
                 }
-            }
-            
-            loop.run_until_complete(self.graphrag.add_document(doc))
-            loop.close()
-            
+
+                await self.graphrag.add_document(doc)
+
+            # 使用 run_async 安全地执行异步任务
+            run_async(_do_async_work())
             print(f"✅ 交互数据已添加到GraphRAG: {interaction.app} -> {interaction.action}")
-            
+
         except Exception as e:
             print(f"⚠️ 添加到GraphRAG失败: {e}")
     
@@ -235,12 +236,11 @@ class KnowledgeBase:
         # 从GraphRAG搜索
         if self.graphrag:
             try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                
-                query_result = loop.run_until_complete(self.graphrag.query(query))
-                
+                async def _do_query():
+                    return await self.graphrag.query(query)
+
+                query_result = run_async(_do_query())
+
                 if query_result and 'results' in query_result:
                     for item in query_result['results'][:limit]:
                         results.append({
@@ -248,9 +248,7 @@ class KnowledgeBase:
                             'metadata': item.get('metadata', {}),
                             'source': 'graphrag'
                         })
-                
-                loop.close()
-                
+
             except Exception as e:
                 print(f"⚠️ 从GraphRAG搜索失败: {e}")
         
@@ -311,28 +309,25 @@ class KnowledgeBase:
         # 同时添加到GraphRAG
         if self.graphrag:
             try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                
-                doc_text = f"指令反馈: 原始指令='{feedback['original_task']}', 优化指令='{feedback['refined_task']}', 成功={feedback['success']}"
-                
-                doc = {
-                    "text": doc_text,
-                    "metadata": {
-                        "type": "feedback",
-                        "timestamp": feedback['timestamp'],
-                        "original_task": feedback['original_task'],
-                        "refined_task": feedback['refined_task'],
-                        "success": feedback['success']
+                async def _do_update():
+                    doc_text = f"指令反馈: 原始指令='{feedback['original_task']}', 优化指令='{feedback['refined_task']}', 成功={feedback['success']}"
+
+                    doc = {
+                        "text": doc_text,
+                        "metadata": {
+                            "type": "feedback",
+                            "timestamp": feedback['timestamp'],
+                            "original_task": feedback['original_task'],
+                            "refined_task": feedback['refined_task'],
+                            "success": feedback['success']
+                        }
                     }
-                }
-                
-                loop.run_until_complete(self.graphrag.add_document(doc))
-                loop.close()
-                
+
+                    await self.graphrag.add_document(doc)
+
+                run_async(_do_update())
                 print(f"✅ 反馈已添加到GraphRAG: {feedback['original_task']} -> {feedback['success']}")
-                
+
             except Exception as e:
                 print(f"⚠️ 添加反馈到GraphRAG失败: {e}")
     

@@ -1093,21 +1093,27 @@ class BehaviorAnalyzer:
             self.collector.stop_collection()
     
     def _process_collected_data(self):
-        """处理收集到的数据"""
+        """
+        处理收集到的数据
+
+        注意：为了避免数据竞争，只处理非最新的文件。
+        最新的文件可能还在被 DataCollector 写入。
+        """
         try:
             # 获取最新的数据文件
             raw_dir = os.path.join(self.output_dir, "raw")
-            logcat_files = [f for f in os.listdir(raw_dir) if f.startswith("logcat_")]
-            uiautomator_files = [f for f in os.listdir(raw_dir) if f.startswith("uiautomator_")]
-            window_files = [f for f in os.listdir(raw_dir) if f.startswith("window_")]
-            
-            if not logcat_files or not uiautomator_files or not window_files:
-                return  # 没有足够的数据文件
-            
-            # 获取最新文件
-            logcat_file = os.path.join(raw_dir, sorted(logcat_files)[-1])
-            uiautomator_file = os.path.join(raw_dir, sorted(uiautomator_files)[-1])
-            window_file = os.path.join(raw_dir, sorted(window_files)[-1])
+            logcat_files = sorted([f for f in os.listdir(raw_dir) if f.startswith("logcat_")])
+            uiautomator_files = sorted([f for f in os.listdir(raw_dir) if f.startswith("uiautomator_")])
+            window_files = sorted([f for f in os.listdir(raw_dir) if f.startswith("window_")])
+
+            # 只处理非最新的文件（倒数第二个文件是已完成的）
+            if len(logcat_files) < 2 or len(uiautomator_files) < 2 or len(window_files) < 2:
+                return  # 没有足够的已完成数据文件
+
+            # 获取倒数第二个文件（避免读取正在写入的最新文件）
+            logcat_file = os.path.join(raw_dir, logcat_files[-2])
+            uiautomator_file = os.path.join(raw_dir, uiautomator_files[-2])
+            window_file = os.path.join(raw_dir, window_files[-2])
             
             # 获取截图文件
             screenshot_dir = self.collector.screenshot_collector.output_dir

@@ -22,7 +22,7 @@ from learning_mode.vlm_analyzer import VLMAnalyzer
 from graphrag.simple_graphrag.simplegraph import SimpleGraph
 
 # 导入本地模块
-from knowledge_base import KnowledgeBase
+from knowledge_base import KnowledgeBase, UserInteraction
 
 
 class UserObserver:
@@ -131,59 +131,74 @@ class UserObserver:
         self._analyze_collected_data(collected_data)
     
     def _analyze_collected_data(self, collected_data: List[Dict[str, Any]]):
-        """分析收集到的数据"""
+        """
+        分析收集到的数据
+
+        注意：当前实现通过行为分析器获取会话数据，然后调用VLM分析。
+        原始的单张截图分析已弃用，因为VLM的analyze_image方法不存在。
+        """
         if not self.vlm_analyzer:
             print("VLM分析器未初始化，跳过分析")
             return
-        
-        # 对收集到的数据进行分析
-        for data in collected_data:
-            if 'screenshot_path' in data and os.path.exists(data['screenshot_path']):
-                # 使用VLM分析截图
-                analysis_result = self.vlm_analyzer.analyze_image(
-                    data['screenshot_path'], 
-                    context=data.get('context', '')
-                )
-                
-                if 'error' not in analysis_result:
-                    # 将分析结果存储到知识库
-                    self._store_analysis_result(data, analysis_result)
+
+        print("正在处理原始数据并构建会话...")
+
+        # 获取最新的 Session 数据
+        latest_session = self.behavior_analyzer.get_latest_session_for_llm()
+
+        if not latest_session:
+            print("未生成有效的会话数据，跳过 VLM 分析")
+            return
+
+        print("调用 VLM 分析用户行为...")
+        # 调用正确的方法
+        try:
+            analysis_result = self.vlm_analyzer.analyze_session_with_screenshots(latest_session)
+
+            if "error" not in analysis_result and "analysis" in analysis_result:
+                final_analysis = analysis_result["analysis"]
+                self._store_analysis_result(latest_session, final_analysis)
+            else:
+                print(f"VLM 分析失败: {analysis_result.get('error')}")
+        except Exception as e:
+            print(f"VLM分析过程出错: {e}")
     
     def _store_analysis_result(self, data: Dict[str, Any], analysis_result: Dict[str, Any]):
-        """将分析结果存储到知识库和GraphRAG"""
+        """
+        将分析结果存储到知识库和GraphRAG
+
+        Args:
+            data: Session 数据或原始数据
+            analysis_result: VLM 分析结果
+        """
         # 提取关键信息
-        timestamp = data.get('timestamp', time.time())
-        app = data.get('app', 'unknown')
-        action = analysis_result.get('action', 'unknown action')
+        # 如果是 Session 数据，从 session_info 中获取时间戳
+        if isinstance(data, dict) and 'session_info' in data:
+            timestamp = data.get("session_info", {}).get("start_time", time.time())
+        else:
+            timestamp = data.get('timestamp', time.time())
+
+        app_name = analysis_result.get('app_name', analysis_result.get('app', 'unknown'))
+        main_action = analysis_result.get('main_action', analysis_result.get('action', 'unknown action'))
         intent = analysis_result.get('intent', 'unknown intent')
-        
-        # 存储到本地知识库
-        interaction = {
-            'timestamp': timestamp,
-            'app': app,
-            'action': action,
-            'intent': intent,
-            'context': data.get('context', ''),
-            'screenshot_path': data.get('screenshot_path', '')
-        }
-        
+
+        # 使用 UserInteraction dataclass
+        interaction = UserInteraction(
+            timestamp=timestamp,
+            app=app_name,
+            action=main_action,
+            intent=intent,
+            context={
+                "raw_session_id": data.get("session_info", {}).get("start_time") if isinstance(data, dict) and 'session_info' in data else None
+            },
+            screenshot_path=None,  # Session 可能包含多张截图，这里设为 None
+            success=True
+        )
+
         self.knowledge_base.add_interaction(interaction)
-        
-        # 存储到GraphRAG
-        if self.graphrag:
-            try:
-                # 构建任务描述
-                task_description = f"用户行为: 在{app}应用中执行{action}操作，意图为{intent}"
-                
-                # 提交到GraphRAG
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                task_id = loop.run_until_complete(self.graphrag.submit_task(task_description))
-                print(f"分析结果已提交到GraphRAG，任务ID: {task_id}")
-                loop.close()
-            except Exception as e:
-                print(f"存储分析结果到GraphRAG失败: {e}")
+
+        # 存储到GraphRAG（如果需要，可以在这里添加GraphRAG存储逻辑）
+        # 当前知识库模块已经在 add_interaction 中处理了 GraphRAG 存储
     
     def stop_learning(self):
         """停止学习模式"""

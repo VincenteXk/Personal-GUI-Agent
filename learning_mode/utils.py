@@ -6,6 +6,7 @@
 import os
 import json
 import time
+import asyncio
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
@@ -179,10 +180,10 @@ def validate_file_path(file_path: str, extensions: List[str] = None) -> bool:
 def get_file_size_str(file_path: str) -> str:
     """
     获取文件大小的字符串表示
-    
+
     Args:
         file_path: 文件路径
-        
+
     Returns:
         文件大小字符串
     """
@@ -198,3 +199,36 @@ def get_file_size_str(file_path: str) -> str:
             return f"{size/(1024*1024*1024):.1f}GB"
     except:
         return "未知"
+
+
+def run_async(coro):
+    """
+    安全地运行异步协程，兼容已有循环和新循环
+
+    Args:
+        coro: 异步协程对象
+
+    Returns:
+        协程执行结果
+
+    Raises:
+        RuntimeError: 如果检测到运行中的事件循环但未安装 nest_asyncio
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # 如果已经有运行的循环（例如在 Jupyter 或 FastAPI 中）
+        try:
+            import nest_asyncio
+            nest_asyncio.apply()
+            return loop.run_until_complete(coro)
+        except ImportError:
+            raise RuntimeError(
+                "检测到已运行的事件循环，但未安装 nest_asyncio。"
+                "请运行: pip install nest_asyncio"
+            )
+    else:
+        return asyncio.run(coro)
