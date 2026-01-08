@@ -20,84 +20,26 @@ import shutil
 from typing import Dict, Any, Optional
 import requests  # 添加requests用于API调用
 
-# 添加子模块路径
-project_root = os.path.dirname(os.path.abspath(__file__))
-autoglm_path = os.path.join(project_root, 'Open-AutoGLM')
-sys.path.insert(0, autoglm_path)
-sys.path.insert(0, os.path.join(project_root, 'learning_mode'))
-
 # 导入AutoGLM
-from phone_agent.agent import PhoneAgent, AgentConfig
-from phone_agent.model import ModelConfig
+from src.AutoGLM.agent import PhoneAgent, AgentConfig
+from src.AutoGLM.model import ModelConfig
 
 # 导入语音模块
-from phone_agent.voice import VoiceAssistant
+from src.AutoGLM.voice import VoiceAssistant
 
 # 导入learning_mode相关模块
-from learning_mode.behavior_analyzer import BehaviorAnalyzer
-from learning_mode.vlm_analyzer import VLMAnalyzer
+from src.learning.behavior_analyzer import BehaviorAnalyzer
+from src.learning.vlm_analyzer import VLMAnalyzer
 
 # 导入本地模块
-from observer import UserObserver
-from refiner import InstructionRefiner
-from knowledge_base import KnowledgeBase
+from src.core.observer import UserObserver
+from src.core.refiner import InstructionRefiner
+from src.core.knowledge_base import KnowledgeBase
+from src.shared.utils import check_model_api
 
 
 
-def check_model_api(base_url: str, model_name: str, api_key: str = "EMPTY") -> bool:
-    """
-    Check if the model API is accessible and the specified model exists.
 
-    Checks:
-    1. Network connectivity to the API endpoint
-    2. Model exists in the available models list
-
-    Args:
-        base_url: The API base URL
-        model_name: The model name to check
-        api_key: The API key for authentication
-
-    Returns:
-        True if all checks pass, False otherwise.
-    """
-    # Import OpenAI
-    from openai import OpenAI
-        
-    print("🔍 Checking model API...")
-    print("-" * 50)
-
-    all_passed = True
-
-    # Check 1: Network connectivity using chat API
-    print(f"1. Checking API connectivity ({base_url})...", end=" ")
-    # Create OpenAI client
-    client = OpenAI(base_url=base_url, api_key=api_key, timeout=30.0)
-
-    # Use chat completion to test connectivity (more universally supported than /models)
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=[{"role": "user", "content": "Hi"}],
-        max_tokens=5,
-        temperature=0.0,
-        stream=False,
-    )
-
-    # Check if we got a valid response
-    if response.choices and len(response.choices) > 0:
-        print("✅ OK")
-    else:
-        print("❌ FAILED")
-        print("   Error: Received empty response from API")
-        all_passed = False
-
-    print("-" * 50)
-
-    if all_passed:
-        print("✅ Model API checks passed!\n")
-    else:
-        print("❌ Model API check failed. Please fix the issues above.")
-
-    return all_passed
 
 
 class PersonalUI:
@@ -311,13 +253,13 @@ class PersonalUI:
         # 初始化语音模块
         voice_assistant = None
         if voice_mode:
-            from Open_AutoGLM.phone_agent.voice import VoiceAssistant
+            from src.AutoGLM.voice import VoiceAssistant
             voice_assistant = VoiceAssistant()
             print("🎤 语音模式已就绪！")
-        
+
         # 1. 使用InstructionRefiner优化指令
         refined_task = self.refiner.refine_task(task)
-        
+
         # 2. 使用PhoneAgent执行任务
         result = self.phone_agent.run(refined_task)
         print(f"任务执行结果: {result}")
@@ -333,7 +275,7 @@ class PersonalUI:
         # 初始化语音模块
         voice_assistant = None
         if voice_mode:
-            from Open_AutoGLM.phone_agent.voice import VoiceAssistant
+            from src.AutoGLM.voice import VoiceAssistant
             voice_assistant = VoiceAssistant()
             print("🎤 语音模式已就绪！")
         
@@ -399,19 +341,37 @@ class PersonalUI:
         print("👁️ 启动观察模式...")
         self.observer.start_learning_loop()
     
-    def check_system_requirements(self, device_type: DeviceType = DeviceType.ADB) -> bool:
-        """检查系统要求"""
-        return check_system_requirements(device_type)
 
 
 def main():
     """主入口函数"""
+    import argparse
+
+    # 创建命令行参数解析器
+    parser = argparse.ArgumentParser(description="PersonalUI - 个性化GUI Agent系统")
+    parser.add_argument("--base-url", type=str, default=None, help="Model API base URL")
+    parser.add_argument("--model", type=str, default=None, help="Model name")
+    parser.add_argument("--apikey", type=str, default=None, help="API key")
+    parser.add_argument("--device-id", type=str, default=None, help="Device ID")
+    parser.add_argument("--max-steps", type=int, default=100, help="Max steps")
+    parser.add_argument("--lang", type=str, default="cn", help="Language (cn/en)")
+    parser.add_argument("--mode", type=str, default="interactive",
+                       choices=["interactive", "learning", "execution"],
+                       help="Running mode")
+
+    args = parser.parse_args()
 
     # 初始化 PersonalUI
-    app = PersonalUI()
-    
-    # 运行交互模式
-    app.start_interactive_mode()
+    app = PersonalUI(args)
+
+    # 根据模式运行
+    if args.mode == "learning":
+        app.start_learning_mode()
+    elif args.mode == "execution":
+        app.start_execution_mode()
+    else:
+        # 运行交互模式
+        app.start_interactive_mode()
 
 
 if __name__ == "__main__":
