@@ -5,7 +5,12 @@ from typing import Any, Optional
 
 from src.AutoGLM.agent import PhoneAgent, AgentConfig as PhoneAgentConfig
 from src.AutoGLM.model import ModelClient, ModelConfig
-from task_framework.interfaces import TaskExecutorInterface, ExecutionResult
+from task_framework.interfaces import (
+    TaskExecutorInterface,
+    ExecutionResult,
+    TaskCapability,
+    TaskParameter,
+)
 
 
 @dataclass
@@ -59,26 +64,7 @@ class PhoneTaskExecutor(TaskExecutorInterface):
             agent_config=agent_config,
         )
 
-    def can_handle(self, task_type: str) -> bool:
-        """
-        检查是否能处理指定类型的任务。
-
-        支持的任务类型：
-        - phone_automation: 通用手机自动化
-        - app_launch: 启动应用
-        - send_message: 发送消息
-        - shopping: 购物相关
-        - food_delivery: 外卖相关
-        """
-        supported_types = [
-            "phone_automation",
-            "app_launch",
-            "send_message",
-            "shopping",
-            "food_delivery",
-            "general",  # 通用任务
-        ]
-        return task_type in supported_types
+    # can_handle 方法现在由父类 TaskExecutorInterface 提供默认实现
 
     def execute_task(
         self,
@@ -160,33 +146,56 @@ class PhoneTaskExecutor(TaskExecutorInterface):
                 },
             )
 
-    def get_capabilities(self) -> dict[str, Any]:
+    def get_capabilities(self) -> list[TaskCapability]:
         """
-        获取执行器的能力描述。
+        获取执行器的能力列表。
 
         Returns:
-            能力字典
+            TaskCapability 列表，描述每种可执行的任务类型
         """
-        return {
-            "name": "PhoneTaskExecutor",
-            "description": "手机自动化任务执行器，基于AutoGLM PhoneAgent",
-            "supported_task_types": [
-                "phone_automation",
-                "app_launch",
-                "send_message",
-                "shopping",
-                "food_delivery",
-                "general",
-            ],
-            "features": [
-                "设备操作自动化",
-                "视觉语言模型驱动",
-                "无需外部交互的序列操作",
-                "支持多种应用场景",
-            ],
-            "limitations": [
-                "需要设备连接（ADB/HDC）",
-                "执行过程不支持人工干预",
-                "每次执行需要完整的自然语言指令",
-            ],
-        }
+        return [
+            TaskCapability(
+                task_type="phone_automation",
+                name="手机自动化",
+                description="执行手机上的简单自动化操作序列（3-10步内）",
+                parameters=[
+                    TaskParameter(
+                        name="instruction",
+                        description="要执行的任务指令，用自然语言清晰描述操作步骤",
+                        required=True,
+                        example="打开微信，找到张三，发送消息'你好'",
+                        value_type="string",
+                    ),
+                    TaskParameter(
+                        name="max_steps",
+                        description="最大执行步骤数限制（建议10-30）",
+                        required=False,
+                        example="20",
+                        value_type="number",
+                    ),
+                ],
+                examples=[
+                    {
+                        "description": "打开应用",
+                        "task_data": {"instruction": "打开微信"},
+                    },
+                    {
+                        "description": "发送消息",
+                        "task_data": {"instruction": "打开微信，找到张三，发送'你好'"},
+                    },
+                    {
+                        "description": "浏览商品",
+                        "task_data": {
+                            "instruction": "打开淘宝，搜索iPhone 15，点击第一个"
+                        },
+                    },
+                ],
+                limitations=[
+                    "仅适合3-10步的简单操作序列",
+                    "需要设备通过ADB/HDC连接",
+                    "执行过程无法暂停或修正",
+                    "不支持需要生物认证的操作",
+                    "不支持需要多轮交互确认的复杂任务",
+                ],
+            ),
+        ]

@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from typing import Any, Optional
 import requests
 
-from task_framework.interfaces import TaskExecutorInterface, ExecutionResult
+from task_framework.interfaces import (
+    TaskExecutorInterface,
+    ExecutionResult,
+    TaskCapability,
+    TaskParameter,
+)
 
 
 @dataclass
@@ -39,23 +44,7 @@ class GraphRAGQueryExecutor(TaskExecutorInterface):
     def __init__(self, config: Optional[GraphRAGConfig] = None):
         self.config = config or GraphRAGConfig()
 
-    def can_handle(self, task_type: str) -> bool:
-        """
-        检查是否能处理指定类型的任务。
-
-        支持的任务类型：
-        - graphrag_query: 通用查询
-        - knowledge_search: 知识搜索
-        - entity_query: 实体查询
-        - relationship_query: 关系查询
-        """
-        supported_types = [
-            "graphrag_query",
-            "knowledge_search",
-            "entity_query",
-            "relationship_query",
-        ]
-        return task_type in supported_types
+    # can_handle 方法现在由父类 TaskExecutorInterface 提供默认实现
 
     def execute_task(
         self,
@@ -192,37 +181,116 @@ class GraphRAGQueryExecutor(TaskExecutorInterface):
                 "error": f"查询异常: {str(e)}",
             }
 
-    def get_capabilities(self) -> dict[str, Any]:
+    def get_capabilities(self) -> list[TaskCapability]:
         """
-        获取执行器的能力描述。
+        获取执行器的能力列表。
 
         Returns:
-            能力字典
+            TaskCapability 列表，描述每种查询类型
         """
-        return {
-            "name": "GraphRAGQueryExecutor",
-            "description": "GraphRAG知识库查询执行器",
-            "supported_task_types": [
-                "graphrag_query",
-                "knowledge_search",
-                "entity_query",
-                "relationship_query",
-            ],
-            "features": [
-                "关键词查询",
-                "实体查询",
-                "关系查询",
-                "路径查询",
-            ],
-            "query_types": {
-                "keyword": "基于关键词的全文搜索",
-                "entity": "查询特定实体的信息",
-                "relationship": "查询实体之间的关系",
-                "path": "查询实体之间的路径",
-            },
-            "limitations": [
-                "只读查询，不支持写入",
-                "需要GraphRAG后端服务运行",
-                "查询性能依赖后端服务状态",
-            ],
-        }
+        return [
+            TaskCapability(
+                task_type="graphrag_query",
+                name="GraphRAG知识库查询",
+                description="从知识图谱数据库中查询相关信息，支持多种查询类型",
+                parameters=[
+                    TaskParameter(
+                        name="query",
+                        description="查询字符串（自然语言描述你想查什么）",
+                        required=True,
+                        example="用户在微信中的常用操作",
+                        value_type="string",
+                    ),
+                    TaskParameter(
+                        name="query_type",
+                        description="查询类型：keyword(关键词搜索), entity(实体查询), relationship(关系查询), path(路径查询)",
+                        required=False,
+                        example="keyword",
+                        value_type="string",
+                    ),
+                    TaskParameter(
+                        name="limit",
+                        description="返回结果数量限制",
+                        required=False,
+                        example="5",
+                        value_type="number",
+                    ),
+                ],
+                examples=[
+                    {
+                        "description": "关键词搜索",
+                        "task_data": {
+                            "query": "用户的购物偏好",
+                            "query_type": "keyword",
+                            "limit": 5,
+                        },
+                    },
+                    {
+                        "description": "实体查询",
+                        "task_data": {
+                            "query": "微信",
+                            "query_type": "entity",
+                            "limit": 3,
+                        },
+                    },
+                    {
+                        "description": "关系查询",
+                        "task_data": {
+                            "query": "用户与应用的关系",
+                            "query_type": "relationship",
+                        },
+                    },
+                ],
+                limitations=[
+                    "只读查询，不支持写入操作",
+                    "需要GraphRAG后端服务运行在配置的地址",
+                    "查询性能依赖后端服务状态和数据量",
+                ],
+            ),
+            TaskCapability(
+                task_type="knowledge_search",
+                name="知识搜索",
+                description="通用知识搜索（等同于 graphrag_query 的 keyword 模式）",
+                parameters=[
+                    TaskParameter(
+                        name="query",
+                        description="搜索关键词或问题",
+                        required=True,
+                        example="用户喜欢什么类型的商品",
+                    ),
+                    TaskParameter(
+                        name="limit",
+                        description="返回结果数量",
+                        required=False,
+                        example="5",
+                        value_type="number",
+                    ),
+                ],
+            ),
+            TaskCapability(
+                task_type="entity_query",
+                name="实体查询",
+                description="查询特定实体的详细信息和相关数据",
+                parameters=[
+                    TaskParameter(
+                        name="query",
+                        description="实体名称或标识符",
+                        required=True,
+                        example="微信",
+                    ),
+                ],
+            ),
+            TaskCapability(
+                task_type="relationship_query",
+                name="关系查询",
+                description="查询实体之间的关系和连接",
+                parameters=[
+                    TaskParameter(
+                        name="query",
+                        description="关系查询描述",
+                        required=True,
+                        example="用户与常用应用之间的关系",
+                    ),
+                ],
+            ),
+        ]

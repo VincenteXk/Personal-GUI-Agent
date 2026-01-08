@@ -89,7 +89,7 @@ SCHEDULER_SYSTEM_PROMPT_ZH = (
 9. **DelegateTask - 委托任务给执行器**
    schedule_do(action="DelegateTask", task_type="任务类型", task_data={
        "具体参数": "值"
-   }, executor_config={"配置": "值"})
+   })
    用于将具体任务委托给底层执行器（如PhoneAgent）执行。
    常见task_type：
    - "phone_automation": 手机自动化任务

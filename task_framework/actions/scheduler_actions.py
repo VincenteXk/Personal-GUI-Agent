@@ -277,7 +277,6 @@ class SchedulerActionHandler:
         """委托任务给底层执行器。"""
         task_type = action.get("task_type", "")
         task_data = action.get("task_data", {})
-        executor_config = action.get("executor_config", {})
 
         if not task_type:
             return SchedulerActionResult(
@@ -295,7 +294,7 @@ class SchedulerActionHandler:
 
         # 执行任务
         try:
-            result = executor.execute_task(task_type, task_data, executor_config)
+            result = executor.execute_task(task_type, task_data, context=self.context)
 
             # 记录执行
             self.context.add_execution_record(
@@ -501,15 +500,12 @@ def schedule_confirm(message: str, risk_level: str = "low") -> dict[str, Any]:
     return schedule_do(action="Confirm", message=message, risk_level=risk_level)
 
 
-def schedule_delegate(
-    task_type: str, task_data: dict, config: dict = None
-) -> dict[str, Any]:
+def schedule_delegate(task_type: str, task_data: dict) -> dict[str, Any]:
     """委托任务。"""
     return schedule_do(
         action="DelegateTask",
         task_type=task_type,
         task_data=task_data,
-        executor_config=config or {},
     )
 
 

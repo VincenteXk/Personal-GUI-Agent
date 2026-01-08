@@ -17,6 +17,10 @@ dependencies = [
     "uvicorn>=0.40.0",
     "volcengine-python-sdk[ark]>=4.0.43",
     "webrtcvad>=2.0.10",
+    "openai>=2.14.0",
+    "pip>=25.3",
+    "setuptools>=80.9.0",
+    "requests>=2.32.5",
 ]
 
 [project.scripts]
@@ -31,6 +35,10 @@ default = true
 members = [
     "graphrag_simple",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "task_framework*"]
 
 [build-system]
 requires = ["setuptools>=61.0"]

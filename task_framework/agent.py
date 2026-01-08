@@ -109,11 +109,8 @@ class TaskAgent:
         # 引导状态
         self._is_onboarded = not self.config.enable_onboarding
 
-        # 获取系统提示词
-        if self.config.system_prompt:
-            self.system_prompt = self.config.system_prompt
-        else:
-            self.system_prompt = get_scheduler_system_prompt(self.config.language)
+        # 构建系统提示词（包含执行器能力）
+        self.system_prompt = self._build_system_prompt()
 
     def run(self) -> None:
         """运行Agent主循环。"""
@@ -323,6 +320,74 @@ class TaskAgent:
             next_state=action_result.next_state,
         )
 
+    def _build_system_prompt(self) -> str:
+        """构建系统提示词，包含执行器能力信息。"""
+        # 获取基础提示词
+        if self.config.system_prompt:
+            base_prompt = self.config.system_prompt
+        else:
+            base_prompt = get_scheduler_system_prompt(self.config.language)
+
+        # 如果没有执行器，返回基础提示词
+        if not self.task_executors:
+            return base_prompt
+
+        # 构建执行器能力说明
+        executors_section = self._build_executors_capability_section()
+
+        # 组合提示词
+        return f"""{base_prompt}
+
+{executors_section}
+"""
+
+    def _build_executors_capability_section(self) -> str:
+        """构建执行器能力说明部分，供系统提示词使用。"""
+        lines = [
+            "## 可用执行器",
+            "使用 DelegateTask 时需指定 task_type 和 task_data 参数。",
+            "",
+        ]
+
+        for executor in self.task_executors:
+            capabilities = executor.get_capabilities()
+
+            for cap in capabilities:
+                # 简化格式：task_type: 名称 - 描述
+                lines.append(f"- {cap.task_type}: {cap.name} - {cap.description}")
+
+                # 简化参数说明（单行，仅显示参数名和必需性）
+                if cap.parameters:
+                    required_params = [p.name for p in cap.parameters if p.required]
+                    optional_params = [p.name for p in cap.parameters if not p.required]
+
+                    param_info = []
+                    if required_params:
+                        param_info.append(f"必需: {', '.join(required_params)}")
+                    if optional_params:
+                        param_info.append(f"可选: {', '.join(optional_params)}")
+
+                    if param_info:
+                        lines.append(f"  参数: {'; '.join(param_info)}")
+
+                # 仅保留一个示例（最简单的那个）
+                if cap.examples:
+                    first_example = cap.examples[0]
+                    task_data_str = json.dumps(
+                        first_example.get("task_data", {}),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    lines.append(
+                        f'  示例: schedule_do(action="DelegateTask", task_type="{cap.task_type}", task_data={task_data_str})'
+                    )
+
+                # 添加限制说明
+                if cap.limitations:
+                    lines.append(f"  限制: {'; '.join(cap.limitations)}")
+
+        return "\n".join(lines)
+
     def _perceive_current_state(self) -> str:
         """
         感知当前任务状态。
@@ -332,6 +397,7 @@ class TaskAgent:
         - 任务信息
         - 执行历史
         - 交互历史
+        - 可用执行器状态
         - 其他上下文信息
 
         Returns:
@@ -339,24 +405,49 @@ class TaskAgent:
         """
         context_summary = self.context.get_context_summary()
 
-        perception = f"""** 当前状态感知 **
+        # 获取执行器状态摘要（简化版，用于每步感知）
+        executors_status = self._get_executors_status_summary()
 
-状态: {context_summary['current_state']}
-步骤: {context_summary['current_step']}
-重试次数: {context_summary['retry_count']}/{self.context.max_retries}
+        # 简化状态感知信息
+        task_info = context_summary["task_info"]
+        perception_parts = [
+            f"状态: {context_summary['current_state']} | 步骤: {context_summary['current_step']}",
+            f"{executors_status}",
+        ]
 
-任务信息:
-- 原始输入: {context_summary['task_info']['original_input'] if context_summary['task_info'] else '无'}
-- 任务类型: {context_summary['task_info']['task_type'] if context_summary['task_info'] else '未确定'}
-- 关键信息: {json.dumps(context_summary['task_info']['key_info'], ensure_ascii=False) if context_summary['task_info'] else '{}'}
+        # 仅在有任务信息时显示
+        if task_info:
+            task_input = task_info.get("original_input", "无")
+            task_type = task_info.get("task_type", "未确定")
+            perception_parts.append(f"任务: {task_input} (类型: {task_type})")
 
-最近执行历史:
-{context_summary['recent_execution']}
+        # 仅在有执行历史时显示
+        if (
+            context_summary["recent_execution"]
+            and context_summary["recent_execution"] != "暂无执行历史"
+        ):
+            perception_parts.append(f"历史: {context_summary['recent_execution']}")
 
-上次操作结果: {context_summary['last_action_result'] or '无'}
-"""
+        # 仅在有上次结果时显示
+        if context_summary["last_action_result"]:
+            perception_parts.append(
+                f"上次结果: {context_summary['last_action_result']}"
+            )
 
-        return perception
+        return "\n".join(perception_parts)
+
+    def _get_executors_status_summary(self) -> str:
+        """获取执行器状态摘要（简化版，用于每步感知）。"""
+        if not self.task_executors:
+            return "可用执行器: 无"
+
+        # 收集所有能力的 task_type
+        all_task_types = []
+        for executor in self.task_executors:
+            caps = executor.get_capabilities()
+            all_task_types.extend([cap.task_type for cap in caps])
+
+        return f"可用执行器: {', '.join(all_task_types)}"
 
     def _request_model_decision(self) -> dict[str, str]:
         """
