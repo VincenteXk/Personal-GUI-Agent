@@ -8,7 +8,11 @@
       "Bash(do python -m py_compile:*)",
       "Bash(done)",
       "Bash(findstr:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(tree:*)",
+      "Bash(git mv:*)",
+      "Bash(python -c:*)",
+      "Bash(git add:*)"
     ]
   }
 }
