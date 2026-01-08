@@ -1,25 +1,37 @@
 import json
 import re
 import subprocess
-import threading
 import time
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
 import os
-import base64
-import shutil
+import cv2
+import numpy as np
+from datetime import datetime
+from PIL import Image, ImageDraw, ImageFont
+import threading
+from queue import Queue
+import logging
+from typing import Dict, List, Tuple, Optional, Any
 import queue
 
-# 全局变量，控制后台学习模式
+# 尝试使用相对导入，如果失败则使用绝对导入
+try:
+    from ..shared_config import APP_PACKAGE_MAPPINGS
+except ImportError:
+    # 如果相对导入失败，尝试从根目录导入
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from shared_config import APP_PACKAGE_MAPPINGS
+
+# 全局变量用于学习模式
 learning_active = False
 learning_thread = None
-learning_queue = queue.Queue()
 
 
 class ScreenshotCollector:
     """截图收集器，负责在特定事件触发时捕获屏幕截图"""
     
-    def __init__(self, output_dir: str = "data/screenshots"):
+    def __init__(self, output_dir: str = "../data/screenshots"):
         self.output_dir = output_dir
         self.ensure_output_dir()
         self.stop_event = threading.Event()
@@ -130,7 +142,7 @@ class ScreenshotCollector:
 class DataCollector:
     """数据收集器，负责从三个adb命令收集原始数据"""
     
-    def __init__(self, output_dir: str = "data/raw"):
+    def __init__(self, output_dir: str = "../data/raw"):
         self.output_dir = output_dir
         self.ensure_output_dir()
         self.stop_event = threading.Event()
@@ -227,7 +239,7 @@ class DataCollector:
         
         self.threads = [logcat_thread, uiautomator_thread, window_thread]
         
-        # 只启动我们自己创建的线程，screenshot_thread已经在start_monitoring中启动了
+        # 只启动 ourselves创建的线程，screenshot_thread已经在start_monitoring中启动了
         for thread in self.threads:
             thread.start()
         
@@ -524,24 +536,8 @@ class DataProcessor:
     """数据处理器，负责处理和融合数据"""
     
     def __init__(self):
-        self.app_name_mapping = {
-            "com.dianping.v1": "大众点评",
-            "com.taobao.taobao": "淘宝",
-            "com.xingin.xhs": "小红书",
-            "com.android.chrome": "Chrome浏览器",
-            "com.tencent.mm": "微信",
-            "com.tencent.mobileqq": "QQ",
-            "com.sankuai.meituan": "美团",
-            "com.jingdong.app.mall": "京东",
-            "com.tmall.wireless": "天猫",
-            "com.alibaba.android.rimet": "钉钉",
-            "com.google.android.apps.nexuslauncher": "桌面",
-            "com.android.launcher3": "桌面",
-            "com.huawei.android.launcher": "桌面",
-            "com.sec.android.app.launcher": "桌面",
-            "com.miui.home": "桌面",
-            "com.oppo.launcher": "桌面"
-        }
+        # 使用共享配置中的应用名称映射
+        self.app_name_mapping = APP_PACKAGE_MAPPINGS
     
     def merge_and_sort_events(self, logcat_events, uiautomator_events, window_events, screenshot_events=None):
         """合并并排序所有事件，增强事件过滤和合并逻辑"""
@@ -1023,7 +1019,7 @@ class DataProcessor:
 class BehaviorAnalyzer:
     """行为分析器主类"""
     
-    def __init__(self, output_dir: str = "data"):
+    def __init__(self, output_dir: str = "../data"):
         self.output_dir = output_dir
         self.sessions_dir = os.path.join(output_dir, "sessions")
         self.processed_dir = os.path.join(output_dir, "processed")
@@ -1185,24 +1181,11 @@ class BehaviorAnalyzer:
                 }, f, indent=2, ensure_ascii=False)
             
             print(f"后台处理完成，处理了 {len(processed_sessions)} 个会话")
-            
-            # 将处理结果放入队列，供其他组件使用
-            if processed_sessions:
-                learning_queue.put(processed_sessions[-1])  # 只放入最新的会话
                 
         except Exception as e:
             print(f"后台处理数据时出错: {str(e)}")
     
-    def get_latest_background_session(self):
-        """获取后台学习模式下最新的会话"""
-        try:
-            # 从队列获取最新会话，非阻塞方式
-            latest_session = None
-            while not learning_queue.empty():
-                latest_session = learning_queue.get_nowait()
-            return latest_session
-        except queue.Empty:
-            return None
+
     
     def collect_and_process(self, duration_seconds: int = 300):
         """收集并处理数据"""
@@ -1394,64 +1377,58 @@ if __name__ == "__main__":
     # 检查命令行参数
     if len(sys.argv) > 1 and sys.argv[1] == "--vlm":
         # 运行VLM分析
-        try:
-            from vlm_analyzer import VLMAnalyzer
-            import json
+        from vlm_analyzer import VLMAnalyzer
+        import json
+        
+        # 检查配置文件
+        config_file = "config.json"
+        if not os.path.exists(config_file):
+            print(f"错误: 配置文件 {config_file} 不存在")
+            print("请复制 config.json.example 为 config.json 并填入您的API密钥")
+            sys.exit(1)
+        
+        # 读取配置
+        with open(config_file, "r", encoding="utf-8") as f:
+            config = json.load(f)
+            api_key = config.get("api_key")
+            model = config.get("model", "glm-4.1v-thinking-flash")
+        
+        if not api_key:
+            print("错误: 配置文件中未找到API密钥")
+            sys.exit(1)
+        
+        # 创建VLM分析器
+        analyzer = VLMAnalyzer(api_key=api_key, model=model)
+        
+        # 分析最新会话
+        sessions_dir = "data/processed"
+        if not os.path.exists(sessions_dir):
+            print(f"错误: 目录 {sessions_dir} 不存在")
+            sys.exit(1)
+        
+        print("开始使用VLM分析最新会话...")
+        result = analyzer.analyze_latest_session(sessions_dir)
+        
+        if "error" in result:
+            print(f"分析失败: {result['error']}")
+        else:
+            print(f"分析成功，结果已保存到: {result['output_file']}")
             
-            # 检查配置文件
-            config_file = "config.json"
-            if not os.path.exists(config_file):
-                print(f"错误: 配置文件 {config_file} 不存在")
-                print("请复制 config.json.example 为 config.json 并填入您的API密钥")
-                sys.exit(1)
-            
-            # 读取配置
-            with open(config_file, "r", encoding="utf-8") as f:
-                config = json.load(f)
-                api_key = config.get("api_key")
-                model = config.get("model", "glm-4.1v-thinking-flash")
-            
-            if not api_key:
-                print("错误: 配置文件中未找到API密钥")
-                sys.exit(1)
-            
-            # 创建VLM分析器
-            analyzer = VLMAnalyzer(api_key=api_key, model=model)
-            
-            # 分析最新会话
-            sessions_dir = "data/processed"
-            if not os.path.exists(sessions_dir):
-                print(f"错误: 目录 {sessions_dir} 不存在")
-                sys.exit(1)
-            
-            print("开始使用VLM分析最新会话...")
-            result = analyzer.analyze_latest_session(sessions_dir)
-            
-            if "error" in result:
-                print(f"分析失败: {result['error']}")
-            else:
-                print(f"分析成功，结果已保存到: {result['output_file']}")
-                
-                # 打印分析结果
-                if "analysis" in result and "analysis" in result["analysis"]:
-                    analysis = result["analysis"]["analysis"]
-                    if "app_name" in analysis:
-                        print(f"应用名称: {analysis['app_name']}")
-                    if "main_action" in analysis:
-                        print(f"主要行为: {analysis['main_action']}")
-                    if "detailed_actions" in analysis:
-                        print("详细行为:")
-                        for action in analysis["detailed_actions"]:
-                            print(f"  - {action}")
-                    if "intent" in analysis:
-                        print(f"用户意图: {analysis['intent']}")
-                    if "confidence" in analysis:
-                        print(f"分析置信度: {analysis['confidence']}")
-        except ImportError:
-            print("错误: 无法导入VLM分析模块，请确保已安装所需依赖")
-            print("运行: pip install requests pillow")
-        except Exception as e:
-            print(f"运行VLM分析时出错: {str(e)}")
+            # 打印分析结果
+            if "analysis" in result and "analysis" in result["analysis"]:
+                analysis = result["analysis"]["analysis"]
+                if "app_name" in analysis:
+                    print(f"应用名称: {analysis['app_name']}")
+                if "main_action" in analysis:
+                    print(f"主要行为: {analysis['main_action']}")
+                if "detailed_actions" in analysis:
+                    print("详细行为:")
+                    for action in analysis["detailed_actions"]:
+                        print(f"  - {action}")
+                if "intent" in analysis:
+                    print(f"用户意图: {analysis['intent']}")
+                if "confidence" in analysis:
+                    print(f"分析置信度: {analysis['confidence']}")
     else:
         # 默认行为：使用已有会话数据进行测试
         analyzer = BehaviorAnalyzer()

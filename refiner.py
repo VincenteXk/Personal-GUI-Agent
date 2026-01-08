@@ -39,12 +39,9 @@ class InstructionRefiner:
     def _init_modules(self):
         """初始化各个模块"""
         # 初始化GraphRAG
-        try:
-            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'graphrag', 'config.yaml')
-            if os.path.exists(config_path):
-                self.graphrag = SimpleGraph(config_path=config_path)
-        except Exception as e:
-            print(f"初始化GraphRAG失败: {e}")
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'graphrag', 'config.yaml')
+        if os.path.exists(config_path):
+            self.graphrag = SimpleGraph(config_path=config_path)
     
     def refine_task(self, task: str) -> str:
         """

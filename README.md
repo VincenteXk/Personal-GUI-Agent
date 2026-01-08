@@ -17,8 +17,8 @@ personalUI/
 ├── observer.py                # 用户观察者模块
 ├── knowledge_base.py          # 知识库模块
 ├── refiner.py                 # 指令优化器模块
+├── shared_config.py           # 共享配置模块
 ├── README.md                  # 项目文档
-├── config.json                # 配置文件
 ├── pyproject.toml             # 项目配置
 ├── .gitignore                 # Git忽略文件
 ├── Open-AutoGLM/              # AutoGLM框架（简化版，仅支持 Android）
@@ -34,6 +34,7 @@ personalUI/
 │   │   │   └── handler.py     # Android 动作处理器
 │   │   ├── agent.py           # Android 手机代理
 │   │   ├── device_factory.py  # 设备工厂（仅支持 ADB）
+│   │   ├── voice.py           # 语音处理模块
 │   │   └── config/            # 配置模块
 │   │       ├── apps.py        # Android 应用配置
 │   │       ├── i18n.py        # 国际化配置
@@ -45,15 +46,15 @@ personalUI/
 │   ├── requirements.txt        # 依赖列表
 │   └── setup.py               # 安装脚本
 ├── learning_mode/             # 用户行为学习模块
-│   ├── __init__.py
+│   ├── __init__.py            # 模块初始化文件
 │   ├── behavior_analyzer.py   # 行为分析器
 │   ├── vlm_analyzer.py        # VLM 分析器
-│   ├── utils.py               # 工具函数
-│   └── data/                  # 数据存储目录
-│       ├── raw/               # 原始数据
-│       ├── sessions/          # 会话数据
-│       ├── processed/         # 处理后数据
-│       └── screenshots/       # 截图数据
+│   └── utils.py               # 工具函数
+├── data/                      # 数据存储目录
+│   ├── raw/                   # 原始数据
+│   ├── sessions/              # 会话数据
+│   ├── processed/             # 处理后数据
+│   └── screenshots/           # 截图数据
 └── graphrag/                  # 知识图谱存储模块
     ├── simple_graphrag/       # 简化版 GraphRAG 实现
     │   ├── src/               # 源代码
@@ -96,13 +97,30 @@ personalUI/
 
 ### 5. 学习模式模块 (learning_mode/)
 
+学习模式模块负责从用户操作中学习并构建行为链，包含以下核心组件：
+
 #### 5.1 行为分析器 (behavior_analyzer.py)
 
-实现了数据收集、解析和处理功能，用于从 Android 设备收集用户行为数据。
+实现了数据收集、解析和处理功能，用于从 Android 设备收集用户行为数据。主要类：
+
+- `ScreenshotCollector`: 截图收集器，负责在特定事件触发时捕获屏幕截图
+- `DataCollector`: 数据收集器，负责从三个adb命令收集原始数据
+- `BehaviorAnalyzer`: 行为分析器，负责分析收集的数据并构建行为链
 
 #### 5.2 VLM 分析器 (vlm_analyzer.py)
 
-使用视觉语言模型分析用户行为，包括截图和文本信息。
+使用视觉语言模型分析用户行为，包括截图和文本信息。主要类：
+
+- `VLMAnalyzer`: VLM分析器，使用GLM-4.1V-Thinking-Flash模型分析用户行为链
+
+#### 5.3 工具函数 (utils.py)
+
+提供学习模式模块中使用的通用工具函数，包括：
+
+- 文件操作工具
+- 数据格式化工具
+- 时间处理工具
+- 图片验证工具等
 
 ### 6. GraphRAG 模块 (graphrag/)
 
@@ -169,18 +187,21 @@ python main.py --enable-tcpip 5555
 
 ## 系统要求
 
-- **Python**：3.8 或更高版本
+- **Python**：3.11 或更高版本（见 pyproject.toml）
 - **Android 设备**：
   - 已安装 ADB 工具
   - 已启用 USB 调试
   - 已安装 ADB Keyboard（用于文本输入）
 - **磁盘空间**：用于存储用户行为数据
+- **模型API**：
+  - AutoGLM 模型 API（用于任务执行）
+  - GLM-4V 模型 API（用于行为分析）
 
 ## 配置说明
 
 ### 模型配置
 
-在 `config.json` 中配置模型 API 信息：
+在项目根目录创建 `config.json` 文件，配置模型 API 信息：
 
 ```json
 {
@@ -196,11 +217,15 @@ python main.py --enable-tcpip 5555
   },
   "learning_config": {
     "api_key": "your_glm_api_key",
-    "model": "glm-4.1v-thinking-flash",
+    "model": "glm-4v",
     "output_dir": "data"
   }
 }
 ```
+
+### 应用配置
+
+应用配置存储在 `Open-AutoGLM/phone_agent/config/apps.py` 中，包含常用应用的包名和启动方式。
 
 ## 依赖说明
 

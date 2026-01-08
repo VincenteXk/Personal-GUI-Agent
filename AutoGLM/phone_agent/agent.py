@@ -171,6 +171,7 @@ class PhoneAgent:
         # Get model response
         try:
             msgs = get_messages(self.agent_config.lang)
+            print(self.agent_config.lang)
             print("\n" + "=" * 50)
             print(f"💭 {msgs['thinking']}:")
             print("-" * 50)
