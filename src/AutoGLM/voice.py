@@ -9,19 +9,20 @@ import os
 import time
 import threading
 import wave
-import pyaudio
+import sounddevice as sd
+import numpy as np
 import webrtcvad
 import asyncio
 import edge_tts
-import pygame
+from playsound import playsound
 import io
 import re
 from typing import Optional, Any, Dict, List
 from openai import OpenAI
-from funasr import AutoModel
+# from funasr import AutoModel
 
-# 创建线程锁用于PyAudio资源的线程安全访问
-pyaudio_lock = threading.Lock()
+# 创建线程锁用于音频资源的线程安全访问
+audio_lock = threading.Lock()
 
 
 # 配置参数
@@ -65,36 +66,21 @@ class VoiceAssistant:
             {"role": "system", "content": system_prompt}
         ]
         
-        # 初始化音频系统
-        self.pyaudio_instance = pyaudio.PyAudio()
-        self.pyaudio_lock = threading.Lock()
+        # 初始化音频系统（sounddevice 不需要实例化）
+        self.audio_lock = threading.Lock()
         
         # 初始化模型
         self.vad = webrtcvad.Vad()
         self.vad.set_mode(VAD_MODE)
         print("加载ASR模型...")
-        self.asr_model = AutoModel(model="iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch")
+        # self.asr_model = AutoModel(model="iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch")
         
         print("连接DeepSeek API...")
         self.client = OpenAI(api_key=api_key, base_url=base_url)
-        
-        # 初始化pygame mixer
-        pygame.mixer.pre_init(frequency=22050, size=-16, channels=2, buffer=512)
-        pygame.mixer.init()
     
     def __del__(self):
         """析构函数，清理资源"""
-        try:
-            if hasattr(self, 'pyaudio_instance') and self.pyaudio_instance:
-                self.pyaudio_instance.terminate()
-        except:
-            pass
-        
-        try:
-            if pygame.mixer.get_init():
-                pygame.mixer.quit()
-        except:
-            pass
+        pass
     
     def check_vad_activity(self, audio_data):
         """检测语音活动"""
@@ -110,9 +96,7 @@ class VoiceAssistant:
             min_duration: 最短录音时长（秒）
             silence_duration: 检测到静音后停止录音的时长（秒）
         """
-        with self.pyaudio_lock:
-            stream = self.pyaudio_instance.open(format=pyaudio.paInt16, channels=1, rate=AUDIO_RATE, input=True, frames_per_buffer=CHUNK)
-            
+        with self.audio_lock:
             audio_buffer = []
             print("开始录音，请说话...")
             
@@ -126,40 +110,43 @@ class VoiceAssistant:
             speech_started = False
             
             try:
-                while chunks_recorded < max_chunks:
-                    data = stream.read(CHUNK)
-                    chunks_recorded += 1
-                    
-                    # 将字节数据转换为适合VAD检测的格式
-                    # VAD需要16位PCM数据，采样率为8000、16000或32000Hz
-                    # 我们需要确保数据长度符合要求（10ms、20ms或30ms的音频块）
-                    if len(data) == CHUNK * 2:  # 确保是16位音频
-                        # 检查当前块是否有语音
-                        is_speech = self.vad.is_speech(data, AUDIO_RATE)
+                # 使用 sounddevice 的 InputStream
+                with sd.InputStream(samplerate=AUDIO_RATE, channels=1, dtype='int16', blocksize=CHUNK) as stream:
+                    while chunks_recorded < max_chunks:
+                        # 读取音频数据（返回 numpy 数组）
+                        data_np, overflowed = stream.read(CHUNK)
+                        chunks_recorded += 1
                         
-                        if is_speech:
-                            # 检测到语音，添加到缓冲区
-                            audio_buffer.append(data)
-                            speech_started = True
-                            silence_chunks_count = 0  # 重置静音计数
-                        else:
-                            # 检测到静音
-                            if speech_started:
-                                # 如果已经开始录音，则添加静音块
-                                audio_buffer.append(data)
+                        # 将 numpy 数组转换为字节数据（16位PCM）
+                        data = data_np.tobytes()
+                        
+                        # 将字节数据转换为适合VAD检测的格式
+                        # VAD需要16位PCM数据，采样率为8000、16000或32000Hz
+                        # 我们需要确保数据长度符合要求（10ms、20ms或30ms的音频块）
+                        if len(data) == CHUNK * 2:  # 确保是16位音频
+                            # 检查当前块是否有语音
+                            is_speech = self.vad.is_speech(data, AUDIO_RATE)
                             
-                            silence_chunks_count += 1
-                    else:
-                        # 数据长度不符合要求，添加到缓冲区
-                        audio_buffer.append(data)
-                    
-                    # 如果已达到最小录音时长，且连续静音超过阈值，则停止录音
-                    if chunks_recorded >= min_chunks and silence_chunks_count >= silence_chunks:
-                        print(f"检测到{silence_duration}秒静音，停止录音")
-                        break
-            
-                stream.stop_stream()
-                stream.close()
+                            if is_speech:
+                                # 检测到语音，添加到缓冲区
+                                audio_buffer.append(data)
+                                speech_started = True
+                                silence_chunks_count = 0  # 重置静音计数
+                            else:
+                                # 检测到静音
+                                if speech_started:
+                                    # 如果已经开始录音，则添加静音块
+                                    audio_buffer.append(data)
+                                
+                                silence_chunks_count += 1
+                        else:
+                            # 数据长度不符合要求，添加到缓冲区
+                            audio_buffer.append(data)
+                        
+                        # 如果已达到最小录音时长，且连续静音超过阈值，则停止录音
+                        if chunks_recorded >= min_chunks and silence_chunks_count >= silence_chunks:
+                            print(f"检测到{silence_duration}秒静音，停止录音")
+                            break
             
                 # 检查录音是否包含语音
                 raw_audio = b''.join(audio_buffer)
@@ -170,8 +157,6 @@ class VoiceAssistant:
                     print("未检测到语音活动")
                     return None
             except Exception as e:
-                stream.stop_stream()
-                stream.close()
                 raise e
     
     def asr_transcribe(self, audio_data):
@@ -191,13 +176,13 @@ class VoiceAssistant:
         print(f"识别中...({len(audio_data)/AUDIO_RATE:.2f}秒)")
         start_time = time.time()
         
-        res = self.asr_model.generate(input=audio_stream, cache={}, language="auto", use_itn=False)
+        # res = self.asr_model.generate(input=audio_stream, cache={}, language="auto", use_itn=False)
         asr_time = time.time() - start_time
         print(f"识别耗时: {asr_time:.2f}秒")
         
-        if res and (text := res[0]['text'].split(">")[-1].strip().replace(" ", "")):
-            print(f"识别: {text}")
-            return text
+        # if res and (text := res[0]['text'].split(">")[-1].strip().replace(" ", "")):
+            # print(f"识别: {text}")
+            # return text
         return None
     
     def llm_process(self, text):
@@ -256,12 +241,7 @@ class VoiceAssistant:
         
         # 播放音频
         start_time = time.time()
-        pygame.mixer.music.load(temp_file)
-        pygame.mixer.music.play()
-        
-        # 等待播放完成
-        while pygame.mixer.music.get_busy():
-            time.sleep(0.1)
+        playsound(temp_file, block=True)
         play_time = time.time() - start_time
         print(f"播放耗时: {play_time:.2f}秒")
         
@@ -285,6 +265,13 @@ class VoiceAssistant:
         print(f"用户: {user_response}")
         return user_response
 
+    def listen_and_transcribe(self):
+        """录音并转写文本"""
+        audio_data = self.single_record()
+        if audio_data:
+            return self.asr_transcribe(audio_data)
+        return None
+    
     def ask(self, question: str):
         """主动向用户提问并获取回答"""
         print(f"助手: {question}")
