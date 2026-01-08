@@ -9,18 +9,17 @@ import os
 import time
 import threading
 import wave
-import sounddevice as sd
-import numpy as np
+import pyaudio
 import webrtcvad
 import asyncio
 import edge_tts
 from playsound import playsound
 import io
 import re
+import tempfile
+import whisper
 from typing import Optional, Any, Dict, List
 from openai import OpenAI
-
-# from funasr import AutoModel
 
 # 创建线程锁用于音频资源的线程安全访问
 audio_lock = threading.Lock()
@@ -32,7 +31,7 @@ CHUNK = 1024
 VAD_MODE = 3
 
 # API配置
-API_KEY = ""
+API_KEY = ""#这个地方待处理，我想的是deepseek client其实可以在主程序创建，VoiceAssistant其实只需要“说->听”的功能就行了，llm过程完全可以删掉
 BASE_URL = "https://api.deepseek.com"
 
 
@@ -71,16 +70,16 @@ class VoiceAssistant:
         # 初始化对话记忆
         self.messages = [{"role": "system", "content": system_prompt}]
 
-        # 初始化音频系统（sounddevice 不需要实例化）
+        # 初始化音频系统线程锁
         self.audio_lock = threading.Lock()
 
         # 初始化模型
         self.vad = webrtcvad.Vad()
         self.vad.set_mode(VAD_MODE)
-        print("加载ASR模型...")
-        # self.asr_model = AutoModel(model="iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch")
+        print("加载 Whisper 模型...")
+        self.asr_model = whisper.load_model("medium")  # 模型缓存在 ~/.cache/whisper/
 
-        print("连接DeepSeek API...")
+        print("连接 DeepSeek API...")
         self.client = OpenAI(api_key=api_key, base_url=base_url)
 
     def __del__(self):
@@ -105,7 +104,7 @@ class VoiceAssistant:
         self,
         max_duration: int = 10,
         min_duration: int = 1,
-        silence_duration: float = 1.0,
+        silence_duration: float = 1.5,
     ):
         """单次录音功能，支持VAD检测，带自动停止功能
         Args:
@@ -114,72 +113,72 @@ class VoiceAssistant:
             silence_duration: 检测到静音后停止录音的时长（秒）
         """
         with self.audio_lock:
+            p = pyaudio.PyAudio()
+            stream = p.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=AUDIO_RATE,
+                input=True,
+                frames_per_buffer=CHUNK
+            )
+
             audio_buffer = []
+            accumulated_audio = []
+            processing_started = False
+            silence_start_time = None
+
             print("开始录音，请说话...")
 
-            # 计算参数
-            max_chunks = int(AUDIO_RATE / CHUNK * max_duration)
-            min_chunks = int(AUDIO_RATE / CHUNK * min_duration)
-            silence_chunks = int(silence_duration * AUDIO_RATE / CHUNK)
-
-            chunks_recorded = 0
-            silence_chunks_count = 0
-            speech_started = False
-
             try:
-                # 使用 sounddevice 的 InputStream
-                with sd.InputStream(
-                    samplerate=AUDIO_RATE, channels=1, dtype="int16", blocksize=CHUNK
-                ) as stream:
-                    while chunks_recorded < max_chunks:
-                        # 读取音频数据（返回 numpy 数组）
-                        data_np, overflowed = stream.read(CHUNK)
-                        chunks_recorded += 1
+                while True:
+                    data = stream.read(CHUNK)
+                    audio_buffer.append(data)
+                    accumulated_audio.append(data)
 
-                        # 将 numpy 数组转换为字节数据（16位PCM）
-                        data = data_np.tobytes()
+                    current_duration = len(accumulated_audio) * CHUNK / AUDIO_RATE
 
-                        # 将字节数据转换为适合VAD检测的格式
-                        # VAD需要16位PCM数据，采样率为8000、16000或32000Hz
-                        # 我们需要确保数据长度符合要求（10ms、20ms或30ms的音频块）
-                        if len(data) == CHUNK * 2:  # 确保是16位音频
-                            # 检查当前块是否有语音
-                            is_speech = self.vad.is_speech(data, AUDIO_RATE)
+                    # 每0.5秒进行一次VAD检测
+                    if len(audio_buffer) * CHUNK / AUDIO_RATE >= 0.5:
+                        raw_audio = b''.join(audio_buffer)
+                        vad_result = self.check_vad_activity(raw_audio)
 
-                            if is_speech:
-                                # 检测到语音，添加到缓冲区
-                                audio_buffer.append(data)
-                                speech_started = True
-                                silence_chunks_count = 0  # 重置静音计数
-                            else:
-                                # 检测到静音
-                                if speech_started:
-                                    # 如果已经开始录音，则添加静音块
-                                    audio_buffer.append(data)
+                        if vad_result:
+                            print("检测语音")
+                            if not processing_started:
+                                processing_started = True
+                            silence_start_time = None
+                        elif processing_started and silence_start_time is None:
+                            silence_start_time = time.time()
+                            print("处理...")
 
-                                silence_chunks_count += 1
-                        else:
-                            # 数据长度不符合要求，添加到缓冲区
-                            audio_buffer.append(data)
+                        audio_buffer = []
 
-                        # 如果已达到最小录音时长，且连续静音超过阈值，则停止录音
-                        if (
-                            chunks_recorded >= min_chunks
-                            and silence_chunks_count >= silence_chunks
-                        ):
-                            print(f"检测到{silence_duration}秒静音，停止录音")
+                        # 检查最大录音时长
+                        if current_duration >= max_duration:
+                            print(f"达到最大录音时长{max_duration}秒")
                             break
 
-                # 检查录音是否包含语音
-                raw_audio = b"".join(audio_buffer)
-                if speech_started:
-                    print("检测到语音")
+                    # 如果已达到最小时长且检测到足够的静音，则停止录音
+                    if (processing_started and silence_start_time and
+                        current_duration >= min_duration and
+                        time.time() - silence_start_time > silence_duration):
+                        print("重置")
+                        break
+
+                # 返回录音数据
+                raw_audio = b''.join(accumulated_audio)
+                if processing_started or len(raw_audio) > 0:
                     return raw_audio
                 else:
                     print("未检测到语音活动")
                     return None
+
             except Exception as e:
                 raise e
+            finally:
+                stream.stop_stream()
+                stream.close()
+                p.terminate()
 
     def asr_transcribe(self, audio_data):
         """ASR语音转录"""
@@ -198,14 +197,33 @@ class VoiceAssistant:
         print(f"识别中...({len(audio_data)/AUDIO_RATE:.2f}秒)")
         start_time = time.time()
 
-        # res = self.asr_model.generate(input=audio_stream, cache={}, language="auto", use_itn=False)
-        asr_time = time.time() - start_time
-        print(f"识别耗时: {asr_time:.2f}秒")
+        try:
+            # 保存临时音频文件（Whisper 需要文件路径）
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
+                temp_audio.write(audio_stream.getvalue())
+                temp_path = temp_audio.name
 
-        # if res and (text := res[0]['text'].split(">")[-1].strip().replace(" ", "")):
-        # print(f"识别: {text}")
-        # return text
-        return None
+            # Whisper 识别
+            result = self.asr_model.transcribe(
+                temp_path,
+                language="zh",  # 指定中文
+                verbose=False
+            )
+
+            # 清理临时文件
+            os.remove(temp_path)
+
+            asr_time = time.time() - start_time
+            print(f"识别耗时: {asr_time:.2f}秒")
+
+            text = result["text"].strip()
+            if text:
+                print(f"识别: {text}")
+                return text
+            return None
+        except Exception as e:
+            print(f"语音识别出错: {e}")
+            return None
 
     def llm_process(self, text):
         """LLM处理文本并生成回复"""

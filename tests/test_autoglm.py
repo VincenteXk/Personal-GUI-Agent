@@ -19,6 +19,11 @@ model_config = ModelConfig(
     model_name="ZhipuAI/AutoGLM-Phone-9B",
     api_key='ms-0f350401-afb3-48ce-b585-9caeb45d1276',
 )
+# model_config = ModelConfig(
+#     base_url="https://open.bigmodel.cn/api/paas/v4/chat/completions",
+#     model_name="glm-4.6v-flash",
+#     api_key='5c548a94d1f641cd80238cebc5bb0422.Az50KakhJPjgi1og',
+# )
 
 # 创建 Agent
 agent = PhoneAgent(model_config=model_config)
