@@ -26,6 +26,9 @@ from src.AutoGLM.config.apps import list_supported_apps
 from src.AutoGLM.device_factory import get_device_factory
 from src.AutoGLM.model import ModelConfig
 from src.shared.utils import check_model_api
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def check_system_requirements() -> bool:
@@ -96,9 +99,7 @@ def check_system_requirements() -> bool:
         )
         lines = result.stdout.strip().split("\n")
         # Filter out header and empty lines, look for 'device' status
-        devices = [
-            line for line in lines[1:] if line.strip() and "\tdevice" in line
-        ]
+        devices = [line for line in lines[1:] if line.strip() and "\tdevice" in line]
 
         if not devices:
             print("❌ FAILED")
@@ -106,9 +107,7 @@ def check_system_requirements() -> bool:
             print("   Solution:")
             print("     1. Enable USB debugging on your Android device")
             print("     2. Connect via USB and authorize the connection")
-            print(
-                "     3. Or connect remotely: python main.py --connect <ip>:<port>"
-            )
+            print("     3. Or connect remotely: python main.py --connect <ip>:<port>")
             all_passed = False
         else:
             device_ids = [d.split("\t")[0] for d in devices]
@@ -212,14 +211,16 @@ Examples:
     parser.add_argument(
         "--base-url",
         type=str,
-        default=os.getenv("PHONE_AGENT_BASE_URL", "http://localhost:8000/v1"),
+        default=os.getenv(
+            "PHONE_AGENT_BASE_URL", "https://api-inference.modelscope.cn/v1"
+        ),
         help="Model API base URL",
     )
 
     parser.add_argument(
         "--model",
         type=str,
-        default=os.getenv("PHONE_AGENT_MODEL", "autoglm-phone-9b"),
+        default=os.getenv("PHONE_AGENT_MODEL", "ZhipuAI/AutoGLM-Phone-9B"),
         help="Model name",
     )
 
@@ -301,9 +302,6 @@ Examples:
     )
 
     return parser.parse_args()
-
-
-
 
 
 def handle_device_commands(args) -> bool:

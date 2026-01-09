@@ -49,23 +49,29 @@ class GraphRAGQueryExecutor(TaskExecutorInterface):
     def execute_task(
         self,
         task_type: str,
-        task_data: dict[str, Any],
-        config: dict[str, Any],
+        task_params: dict[str, Any],
+        context: dict[str, Any],
     ) -> ExecutionResult:
         """
         执行GraphRAG查询任务。
 
         Args:
             task_type: 任务类型
-            task_data: 任务数据
-                - query: 查询字符串（必需）
-                - query_type: 查询类型（可选：keyword/entity/relationship/path）
-                - limit: 返回结果数量限制（可选，默认5）
-            config: 执行配置
+            task_params: 任务参数
+                - query: 查询关键词（必需）
+                - fuzzy: 是否模糊查询（可选，默认True）
+                - limit: 返回结果数量限制（可选，默认10）
+            context: 执行上下文
 
         Returns:
             ExecutionResult 执行结果
         """
+        print(f"\n{'='*60}")
+        print(f"🔍 GraphRAGQueryExecutor 开始执行")
+        print(f"任务类型: {task_type}")
+        print(f"任务参数: {task_params}")
+        print(f"{'='*60}\n")
+
         if not self.can_handle(task_type):
             return ExecutionResult(
                 success=False,
@@ -74,7 +80,7 @@ class GraphRAGQueryExecutor(TaskExecutorInterface):
             )
 
         # 提取查询参数
-        query = task_data.get("query")
+        query = task_params.get("query")
         if not query:
             return ExecutionResult(
                 success=False,
@@ -82,78 +88,68 @@ class GraphRAGQueryExecutor(TaskExecutorInterface):
                 data={},
             )
 
-        query_type = task_data.get("query_type", "keyword")
-        limit = task_data.get("limit", 5)
+        fuzzy = task_params.get("fuzzy", True)
+        limit = task_params.get("limit", 10)
 
         # 执行查询
         try:
-            result = self._query_graphrag(query, query_type, limit)
+            print(f"🔎 查询GraphRAG: '{query}' (fuzzy={fuzzy}, limit={limit})")
+            results = self._query_graphrag(query, fuzzy, limit)
 
-            if result.get("success", False):
-                return ExecutionResult(
-                    success=True,
-                    message=f"查询成功，返回 {len(result.get('results', []))} 条结果",
-                    data={
-                        "results": result.get("results", []),
-                        "query": query,
-                        "query_type": query_type,
-                        "count": len(result.get("results", [])),
-                    },
-                )
-            else:
-                return ExecutionResult(
-                    success=False,
-                    message=result.get("error", "查询失败"),
-                    data={"query": query, "query_type": query_type},
-                )
+            print(f"✅ 查询成功，返回 {len(results)} 条结果\n")
+            return ExecutionResult(
+                success=True,
+                message=f"查询成功，返回 {len(results)} 条结果",
+                data={
+                    "results": results,
+                    "query": query,
+                    "fuzzy": fuzzy,
+                    "count": len(results),
+                },
+            )
 
         except Exception as e:
+            print(f"❌ 查询失败: {str(e)}\n")
             return ExecutionResult(
                 success=False,
                 message=f"查询异常: {str(e)}",
                 data={
                     "error": str(e),
                     "query": query,
-                    "query_type": query_type,
                 },
             )
 
     def _query_graphrag(
-        self, query: str, query_type: str, limit: int
-    ) -> dict[str, Any]:
+        self, query: str, fuzzy: bool, limit: int
+    ) -> list[dict[str, Any]]:
         """
-        调用GraphRAG后端API进行查询。
+        调用GraphRAG后端API进行关键词查询。
 
         Args:
-            query: 查询字符串
-            query_type: 查询类型
+            query: 查询关键词
+            fuzzy: 是否模糊查询
             limit: 结果数量限制
 
         Returns:
-            查询结果字典
+            查询结果列表
+
+        Raises:
+            Exception: 查询失败时抛出异常
         """
+        url = f"{self.config.backend_url}/api/search/keyword"
+
+        # 构建请求体（注意：后端使用 POST 方法，参数名是 keyword）
+        payload = {
+            "keyword": query,
+            "fuzzy": fuzzy,
+            "limit": limit,
+        }
+
         try:
-            # 根据查询类型选择API端点
-            endpoint_map = {
-                "keyword": "/api/search/keyword",
-                "entity": "/api/search/entity",
-                "relationship": "/api/search/relationship",
-                "path": "/api/search/path",
-            }
-
-            endpoint = endpoint_map.get(query_type, "/api/search/keyword")
-            url = f"{self.config.backend_url}{endpoint}"
-
-            # 构建请求参数
-            params = {
-                "query": query,
-                "limit": limit,
-            }
-
-            # 发送请求
-            response = requests.get(
+            # 使用 POST 方法发送请求
+            response = requests.post(
                 url,
-                params=params,
+                json=payload,
                 timeout=self.config.timeout,
             )
 
@@ -161,25 +157,15 @@ class GraphRAGQueryExecutor(TaskExecutorInterface):
             return response.json()
 
         except requests.exceptions.ConnectionError:
-            return {
-                "success": False,
-                "error": f"无法连接到GraphRAG后端服务: {self.config.backend_url}",
-            }
+            raise Exception(
+                f"无法连接到GraphRAG后端服务: {self.config.backend_url}。请确保服务已启动。"
+            )
         except requests.exceptions.Timeout:
-            return {
-                "success": False,
-                "error": f"查询超时（{self.config.timeout}秒）",
-            }
+            raise Exception(f"查询超时（{self.config.timeout}秒）")
         except requests.exceptions.HTTPError as e:
-            return {
-                "success": False,
-                "error": f"HTTP错误: {e.response.status_code}",
-            }
+            raise Exception(f"HTTP错误: {e.response.status_code} - {e.response.text}")
         except Exception as e:
-            return {
-                "success": False,
-                "error": f"查询异常: {str(e)}",
-            }
+            raise Exception(f"查询异常: {str(e)}")
 
     def get_capabilities(self) -> list[TaskCapability]:
         """
@@ -191,106 +177,50 @@ class GraphRAGQueryExecutor(TaskExecutorInterface):
         return [
             TaskCapability(
                 task_type="graphrag_query",
-                name="GraphRAG知识库查询",
-                description="从知识图谱数据库中查询相关信息，支持多种查询类型",
+                name="知识库查询",
+                description="从知识图谱中搜索相关信息（关键词查询）",
                 parameters=[
                     TaskParameter(
                         name="query",
-                        description="查询字符串（自然语言描述你想查什么）",
+                        description="查询关键词（支持实体、类、关系、属性的搜索）",
                         required=True,
-                        example="用户在微信中的常用操作",
+                        example="用户在微信中的操作",
                         value_type="string",
                     ),
                     TaskParameter(
-                        name="query_type",
-                        description="查询类型：keyword(关键词搜索), entity(实体查询), relationship(关系查询), path(路径查询)",
+                        name="fuzzy",
+                        description="是否模糊匹配（True=模糊，False=严格匹配）",
                         required=False,
-                        example="keyword",
-                        value_type="string",
+                        example="true",
+                        value_type="boolean",
                     ),
                     TaskParameter(
                         name="limit",
                         description="返回结果数量限制",
                         required=False,
-                        example="5",
+                        example="10",
                         value_type="number",
                     ),
                 ],
                 examples=[
                     {
-                        "description": "关键词搜索",
-                        "task_data": {
-                            "query": "用户的购物偏好",
-                            "query_type": "keyword",
-                            "limit": 5,
-                        },
+                        "description": "查询用户偏好",
+                        "task_data": {"query": "用户的购物偏好", "limit": 10},
                     },
                     {
-                        "description": "实体查询",
-                        "task_data": {
-                            "query": "微信",
-                            "query_type": "entity",
-                            "limit": 3,
-                        },
+                        "description": "查询应用信息",
+                        "task_data": {"query": "微信", "fuzzy": False},
                     },
                     {
-                        "description": "关系查询",
-                        "task_data": {
-                            "query": "用户与应用的关系",
-                            "query_type": "relationship",
-                        },
+                        "description": "查询关系",
+                        "task_data": {"query": "用户与应用的关系"},
                     },
                 ],
                 limitations=[
+                    "仅支持关键词查询（模糊/严格匹配）",
                     "只读查询，不支持写入操作",
-                    "需要GraphRAG后端服务运行在配置的地址",
-                    "查询性能依赖后端服务状态和数据量",
-                ],
-            ),
-            TaskCapability(
-                task_type="knowledge_search",
-                name="知识搜索",
-                description="通用知识搜索（等同于 graphrag_query 的 keyword 模式）",
-                parameters=[
-                    TaskParameter(
-                        name="query",
-                        description="搜索关键词或问题",
-                        required=True,
-                        example="用户喜欢什么类型的商品",
-                    ),
-                    TaskParameter(
-                        name="limit",
-                        description="返回结果数量",
-                        required=False,
-                        example="5",
-                        value_type="number",
-                    ),
-                ],
-            ),
-            TaskCapability(
-                task_type="entity_query",
-                name="实体查询",
-                description="查询特定实体的详细信息和相关数据",
-                parameters=[
-                    TaskParameter(
-                        name="query",
-                        description="实体名称或标识符",
-                        required=True,
-                        example="微信",
-                    ),
-                ],
-            ),
-            TaskCapability(
-                task_type="relationship_query",
-                name="关系查询",
-                description="查询实体之间的关系和连接",
-                parameters=[
-                    TaskParameter(
-                        name="query",
-                        description="关系查询描述",
-                        required=True,
-                        example="用户与常用应用之间的关系",
-                    ),
+                    "需要GraphRAG后端服务运行（默认 http://localhost:8000）",
+                    "查询性能依赖后端数据量和索引状态",
                 ],
             ),
         ]

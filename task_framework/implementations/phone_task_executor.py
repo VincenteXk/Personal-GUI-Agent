@@ -69,26 +69,33 @@ class PhoneTaskExecutor(TaskExecutorInterface):
     def execute_task(
         self,
         task_type: str,
-        task_data: dict[str, Any],
-        config: dict[str, Any],
+        task_params: dict[str, Any],
+        context: dict[str, Any],
     ) -> ExecutionResult:
         """
         执行手机任务。
 
         Args:
             task_type: 任务类型
-            task_data: 任务数据，必须包含 "instruction" 字段
-            config: 执行配置，可选 "device_id"
+            task_params: 任务参数，必须包含 "instruction" 字段
+            context: 执行上下文，可选 "device_id"
 
         Returns:
             ExecutionResult 执行结果
 
-        Example task_data:
+        Example task_params:
             {
                 "instruction": "打开微信，找到测试联系人1",
                 "max_steps": 30,  # 可选
             }
         """
+        print(f"\n{'='*60}")
+        print(f"📱 PhoneTaskExecutor 开始执行")
+        print(f"任务类型: {task_type}")
+        print(f"任务参数: {task_params}")
+        print(f"上下文: {context}")
+        print(f"{'='*60}\n")
+
         if not self.can_handle(task_type):
             return ExecutionResult(
                 success=False,
@@ -97,7 +104,7 @@ class PhoneTaskExecutor(TaskExecutorInterface):
             )
 
         # 提取指令
-        instruction = task_data.get("instruction")
+        instruction = task_params.get("instruction")
         if not instruction:
             return ExecutionResult(
                 success=False,
@@ -106,23 +113,33 @@ class PhoneTaskExecutor(TaskExecutorInterface):
             )
 
         # 更新配置
-        if "device_id" in config:
-            self.phone_agent.agent_config.device_id = config["device_id"]
+        if context and "device_id" in context:
+            self.phone_agent.agent_config.device_id = context["device_id"]
 
-        if "max_steps" in task_data:
-            self.phone_agent.agent_config.max_steps = task_data["max_steps"]
+        if "max_steps" in task_params:
+            self.phone_agent.agent_config.max_steps = task_params["max_steps"]
 
+        print(f"🎯 即将执行指令: {instruction}")
+        print(f"📋 最大步数: {self.phone_agent.agent_config.max_steps}")
+        if self.phone_agent.agent_config.device_id:
+            print(f"📱 设备ID: {self.phone_agent.agent_config.device_id}")
+        print()
         # 执行任务
         try:
             # 重置agent状态
             self.phone_agent.reset()
 
+            print("🚀 开始执行PhoneAgent...")
             # 运行任务
             result_message = self.phone_agent.run(instruction)
 
             # 获取执行上下文和步骤
-            context = self.phone_agent.context
+            agent_context = self.phone_agent.context
             step_count = self.phone_agent.step_count
+
+            print(f"\n✅ PhoneAgent执行完成")
+            print(f"   执行步数: {step_count}")
+            print(f"   结果消息: {result_message}\n")
 
             return ExecutionResult(
                 success=True,
@@ -131,11 +148,12 @@ class PhoneTaskExecutor(TaskExecutorInterface):
                     "step_count": step_count,
                     "task_type": task_type,
                     "instruction": instruction,
-                    "context_length": len(context),
+                    "context_length": len(agent_context),
                 },
             )
 
         except Exception as e:
+            print(f"\n❌ PhoneAgent执行失败: {str(e)}\n")
             return ExecutionResult(
                 success=False,
                 message=f"执行失败: {str(e)}",

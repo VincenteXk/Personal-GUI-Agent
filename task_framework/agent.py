@@ -20,6 +20,8 @@ from .config import TaskAgentConfig
 from .context import TaskContext, TaskInfo, TaskState
 from .actions import SchedulerActionHandler, parse_scheduler_action
 from .prompts import get_scheduler_system_prompt, get_messages
+from openai import OpenAI
+from openai.types.chat.chat_completion import ChatCompletion
 from .interfaces import (
     UserInputInterface,
     UserInteractionInterface,
@@ -30,7 +32,6 @@ from .interfaces import (
 )
 
 # 如果有model client，可以导入
-# from phone_agent.model import ModelClient, ModelConfig
 
 
 @dataclass
@@ -89,7 +90,7 @@ class TaskAgent:
         device_capability: Optional[DeviceCapabilityInterface] = None,
         profile_manager: Optional[ProfileManagerInterface] = None,
         task_executors: Optional[list[TaskExecutorInterface]] = None,
-        model_client: Optional[Any] = None,  # ModelClient
+        model_client: Optional[Any] = None,  # OpenAI client
         config: Optional[TaskAgentConfig] = None,
     ):
         self.user_input = user_input
@@ -97,8 +98,24 @@ class TaskAgent:
         self.device_capability = device_capability
         self.profile_manager = profile_manager
         self.task_executors = task_executors or []
-        self.model_client = model_client
         self.config = config or TaskAgentConfig()
+
+        # 只在提供了配置时创建 model_client
+        if model_client is not None:
+            self.model_client: OpenAI = model_client
+        elif self.config.model_base_url and self.config.model_api_key:
+            self.model_client: OpenAI = OpenAI(
+                base_url=self.config.model_base_url,
+                api_key=self.config.model_api_key,
+            )
+            print(
+                f"base_url:{self.config.model_base_url}",
+            )
+            print(f"api_key:{self.config.model_api_key}")
+            print(f"model_name:{self.config.model_name}")
+
+        else:
+            raise ValueError("model_client is not set")
 
         # 初始化上下文
         self.context: Optional[TaskContext] = None
@@ -267,7 +284,6 @@ class TaskAgent:
                 thinking="",
                 message=f"模型决策失败: {e}",
             )
-
         # 解析操作
         try:
             action = parse_scheduler_action(response["action"])
@@ -460,27 +476,45 @@ class TaskAgent:
             # 如果没有模型客户端，使用简化的决策逻辑
             return self._fallback_decision()
 
-        # 使用大模型进行决策
-        response = self.model_client.request(self.context.conversation_history)
+        # print("conversation_history:", self.context.conversation_history)
+        # 使用已构建的对话历史进行决策
+        response = self.model_client.chat.completions.create(
+            messages=self.context.conversation_history,
+            model=self.config.model_name,
+            max_completion_tokens=2048,
+            temperature=0.3,
+            top_p=0.95,
+            stream=False,
+            stop=None,
+            frequency_penalty=0,
+            presence_penalty=0,
+        )
 
-        # 解析响应（假设返回的response有thinking和action属性）
-        # 这里需要根据实际的ModelClient接口调整
-        if hasattr(response, "thinking") and hasattr(response, "action"):
-            return {"thinking": response.thinking, "action": response.action}
-        else:
-            # 尝试解析字符串响应
-            return self._parse_model_response(str(response))
+        # 解析 OpenAI 格式的响应
+        # 响应格式: response.choices[0].message.content
 
-    def _parse_model_response(self, response_text: str) -> dict[str, str]:
+        # 解析 <think>...</think> 和 <answer>...</answer> 标签
+        return self._parse_model_response(response.choices[0].message)
+
+    def _parse_model_response(self, message) -> dict[str, str]:
         """解析模型响应文本。"""
         import re
 
-        # 尝试提取 <think>...</think> 和 <answer>...</answer>
-        think_match = re.search(r"<think>(.*?)</think>", response_text, re.DOTALL)
-        answer_match = re.search(r"<answer>(.*?)</answer>", response_text, re.DOTALL)
+        content = message.content
+        # 首先获取action
+        answer_match = re.search(r"<answer>(.*?)</answer>", content, re.DOTALL)
+        action = answer_match.group(1).strip() if answer_match else message.content
+        # 然后获取reasoning_content
+        reasoning_content = message.reasoning_content
 
-        thinking = think_match.group(1).strip() if think_match else ""
-        action = answer_match.group(1).strip() if answer_match else response_text
+        # 首先尝试直接获取reasoning_content
+        if reasoning_content:
+            thinking = reasoning_content
+        else:
+            # 尝试提取 <think>...</think> 和 <answer>...</answer>
+            think_match = re.search(r"<think>(.*?)</think>", content, re.DOTALL)
+
+            thinking = think_match.group(1).strip() if think_match else ""
 
         return {"thinking": thinking, "action": action}
 

@@ -6,6 +6,7 @@
 3. KnowledgeBase - 本地知识库
 """
 
+from ast import Mod
 from task_framework import TaskAgent, TaskAgentConfig
 from task_framework.implementations import (
     TerminalUserInput,
@@ -16,6 +17,11 @@ from task_framework.implementations import (
     GraphRAGConfig,
 )
 from src.AutoGLM.model import ModelConfig
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 
 def main():
@@ -27,9 +33,9 @@ def main():
 
     # 配置大模型（如果有）
     model_config = ModelConfig(
-        base_url="http://localhost:8000/v1",  # 替换为你的模型服务地址
-        api_key="your-api-key",  # 替换为你的API密钥
-        model_name="glm-4v-plus",  # 替换为你的模型名称
+        base_url="https://api-inference.modelscope.cn/v1",  # 替换为你的模型服务地址
+        api_key=os.getenv("PHONE_AGENT_API_KEY"),  # 替换为你的API密钥
+        model_name="ZhipuAI/AutoGLM-Phone-9B",  # 替换为你的模型名称
     )
 
     # 配置手机任务执行器
@@ -54,15 +60,6 @@ def main():
         graphrag_executor,
     ]
 
-    # 展示执行器能力
-    print("\n📦 可用的执行器：\n")
-    for executor in task_executors:
-        capabilities = executor.get_capabilities()
-        print(f"🔧 {capabilities['name']}")
-        print(f"   描述: {capabilities['description']}")
-        print(f"   支持的任务类型: {', '.join(capabilities['supported_task_types'])}")
-        print()
-
     # 配置任务调度Agent
     agent_config = TaskAgentConfig(
         max_steps=20,
@@ -71,8 +68,9 @@ def main():
         language="zh",
         enable_onboarding=False,
         # 如果有大模型客户端，可以传入model相关配置
-        # model_base_url="http://localhost:8000/v1",
-        # model_api_key="your-api-key",
+        model_base_url="https://api.xiaomimimo.com/v1",
+        model_api_key="sk-cax6c5zkwtab5ue1n8hbs4upswp8me9h1s60t6u1f6yagrk0",
+        model_name="mimo-v2-flash",
     )
 
     # 创建任务调度Agent

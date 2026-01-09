@@ -46,12 +46,16 @@ class PhoneTaskExecutor(TaskExecutorInterface):
 
         Args:
             task_type: 任务类型
-            task_params: 任务参数
+            task_params: 任务参数（应包含'instruction'或可构建任务描述的数据）
             context: 执行上下文
 
         Returns:
             执行结果
         """
+        print(f"\n📱 PhoneTaskExecutor (示例) 开始执行")
+        print(f"   任务类型: {task_type}")
+        print(f"   任务参数: {task_params}\n")
+
         if not self.can_handle(task_type):
             return ExecutionResult(
                 success=False,
@@ -63,16 +67,19 @@ class PhoneTaskExecutor(TaskExecutorInterface):
             try:
                 # 构建任务描述
                 task_description = self._build_task_description(task_params)
+                print(f"🎯 执行指令: {task_description}")
 
                 # 执行任务
                 result = self.phone_agent.run(task_description)
 
+                print(f"✅ 执行成功: {result}\n")
                 return ExecutionResult(
                     success=True,
                     message=result,
                     data={"type": "phone_task", "result": result},
                 )
             except Exception as e:
+                print(f"❌ 执行失败: {e}\n")
                 return ExecutionResult(
                     success=False,
                     message=f"执行失败: {e}",
@@ -80,6 +87,7 @@ class PhoneTaskExecutor(TaskExecutorInterface):
                 )
         else:
             # 模拟执行（用于演示）
+            print(f"⚠️ 模拟执行（未提供PhoneAgent实例）\n")
             return ExecutionResult(
                 success=True,
                 message=f"模拟执行 {task_type} 任务",
@@ -104,6 +112,11 @@ class PhoneTaskExecutor(TaskExecutorInterface):
         Returns:
             任务描述字符串
         """
+        # 优先使用instruction字段（标准方式）
+        if "instruction" in task_params:
+            return task_params["instruction"]
+
+        # 兼容旧的task_info方式
         task_info = task_params.get("task_info")
         if task_info:
             return task_info.normalized_task or task_info.original_input

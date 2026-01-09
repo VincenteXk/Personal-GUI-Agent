@@ -68,7 +68,10 @@ class SchedulerActionHandler:
         Returns:
             SchedulerActionResult 执行结果
         """
+        print("execute action:", action)
         action_type = action.get("_metadata")
+        print("action_type:", action_type)
+        # input("press enter to continue")
 
         if action_type == "finish":
             return self._handle_finish(action)
@@ -294,7 +297,21 @@ class SchedulerActionHandler:
 
         # 执行任务
         try:
-            result = executor.execute_task(task_type, task_data, context=self.context)
+            print(f"\n🔄 委托任务给执行器")
+            print(f"   任务类型: {task_type}")
+            print(f"   执行器: {executor.__class__.__name__}")
+            print(f"   任务数据: {task_data}\n")
+
+            # 构建执行上下文（从TaskContext中提取必要信息）
+            execution_context = {}
+            if hasattr(self.context, "device_id"):
+                execution_context["device_id"] = self.context.device_id
+
+            result = executor.execute_task(
+                task_type=task_type, task_params=task_data, context=execution_context
+            )
+
+            print(f"{'✅' if result.success else '❌'} 执行器返回: {result.message}\n")
 
             # 记录执行
             self.context.add_execution_record(
@@ -308,8 +325,12 @@ class SchedulerActionHandler:
                 data={"executor_result": result},
             )
         except Exception as e:
+            import traceback
+
+            error_msg = f"执行器失败: {e}\n{traceback.format_exc()}"
+            print(f"❌ {error_msg}\n")
             return SchedulerActionResult(
-                success=False, should_finish=False, message=f"执行器失败: {e}"
+                success=False, should_finish=False, message=error_msg
             )
 
     def _handle_check_device(self, action: dict[str, Any]) -> SchedulerActionResult:
