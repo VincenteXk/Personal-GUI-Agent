@@ -2,6 +2,7 @@
 """
 指令优化器模块 - 结合用户习惯优化指令
 """
+#我暂时注释掉了两处对graphrag的使用，来调试之前的学习部分
 
 import os
 import sys
@@ -10,10 +11,9 @@ import time
 from typing import Dict, Any, List, Optional
 
 # 导入graphrag相关模块
-from graphrag.simple_graphrag.simplegraph import SimpleGraph
+#from graphrag.simple_graphrag.simplegraph import SimpleGraph
 
 # 导入本地模块
-from .knowledge_base import KnowledgeBase
 from src.learning.utils import run_async
 
 
@@ -28,7 +28,6 @@ class InstructionRefiner:
             model_config: 模型配置
         """
         self.model_config = model_config
-        self.knowledge_base = KnowledgeBase()
         self.graphrag = None
         self._init_modules()
     
@@ -36,8 +35,8 @@ class InstructionRefiner:
         """初始化各个模块"""
         # 初始化GraphRAG
         config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'graphrag', 'config.yaml')
-        if os.path.exists(config_path):
-            self.graphrag = SimpleGraph(config_path=config_path)
+        # if os.path.exists(config_path):
+        #     self.graphrag = SimpleGraph(config_path=config_path)
     
     def refine_task(self, task: str) -> str:
         """

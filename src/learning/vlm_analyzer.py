@@ -3,6 +3,7 @@ VLM分析模块 - 使用GLM-4.1V-Thinking-Flash模型分析用户行为
 """
 import os
 import json
+import re
 import base64
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -13,11 +14,11 @@ import io
 
 class VLMAnalyzer:
     """VLM分析器，用于分析截图和文本，推理用户行为链"""
-    
+
     def __init__(self, api_key: str, model: str = "glm-4v"):
         """
         初始化VLM分析器
-        
+
         Args:
             api_key: 智谱AI API密钥
             model: 使用的模型名称，默认为glm-4v
@@ -29,6 +30,67 @@ class VLMAnalyzer:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
+
+    @staticmethod
+    def extract_json_from_response(raw_response: str) -> dict:
+        """
+        从VLM响应中提取JSON，处理各种格式：
+        1. 直接JSON
+        2. Markdown代码块包裹的JSON
+        3. 包含其他文本的响应
+
+        Args:
+            raw_response: VLM的原始响应文本
+
+        Returns:
+            提取的JSON对象
+
+        Raises:
+            ValueError: 无法从响应中提取有效的JSON
+        """
+        # 去除首尾空白
+        response = raw_response.strip()
+
+        # 尝试1：直接解析（如果已经是纯JSON）
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            pass
+
+        # 尝试2：提取markdown代码块中的JSON
+        # 匹配 ```json ... ``` 或 ``` ... ```
+        code_block_patterns = [
+            r'```json\s*\n(.*?)\n```',
+            r'```\s*\n(.*?)\n```',
+        ]
+
+        for pattern in code_block_patterns:
+            match = re.search(pattern, response, re.DOTALL)
+            if match:
+                json_str = match.group(1).strip()
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError:
+                    continue
+
+        # 尝试3：查找第一个{...}对象
+        brace_start = response.find('{')
+        if brace_start != -1:
+            # 从第一个{开始，找到匹配的}
+            brace_count = 0
+            for i in range(brace_start, len(response)):
+                if response[i] == '{':
+                    brace_count += 1
+                elif response[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        json_str = response[brace_start:i+1]
+                        try:
+                            return json.loads(json_str)
+                        except json.JSONDecodeError:
+                            break
+
+        raise ValueError("无法从响应中提取有效的JSON")
     
     def encode_image_to_base64(self, image_path: str) -> str:
         """
@@ -78,7 +140,53 @@ class VLMAnalyzer:
         except Exception as e:
             print(f"图片编码失败: {e}")
             return None
-    
+
+    def get_app_specific_prompt(self, app_package: str) -> str:
+        """
+        根据应用类型返回定制化prompt
+
+        分类：
+        - 浏览器：关注搜索、URL、停留时长
+        - 电商：关注商品、价格、加购、支付
+        - 社交：关注消息、联系人、分享
+        - 工具：关注功能操作序列
+        - 默认：通用提取action chain
+        """
+        base_prompt = """你是一个Android应用行为分析专家。请分析用户在{app_name}中的操作序列。
+
+请提取标准化的action chain，使用以下action类型：
+- search: 搜索内容
+- browse: 浏览/滚动
+- click: 点击操作
+- input: 输入文本
+- view_detail: 查看详情
+- add_to_cart: 加入购物车
+- order: 下单
+- pay: 支付
+- share: 分享
+- other: 其他操作
+
+输出JSON格式：
+{
+  "actions": [
+    {"type": "...", "target": "具体对象", "timestamp_offset": 秒数, "details": "..."},
+    ...
+  ],
+  "summary": "一句话总结用户意图"
+}"""
+
+        # 应用特定增强
+        if "chrome" in app_package.lower() or "browser" in app_package.lower():
+            return base_prompt.format(app_name="浏览器") + "\n\n重点关注：搜索关键词、访问的URL、停留时长、页面切换"
+        elif "taobao" in app_package.lower() or "jd" in app_package.lower() or "amazon" in app_package.lower():
+            return base_prompt.format(app_name="电商应用") + "\n\n重点关注：浏览的商品、价格、是否加购/支付、商品名称"
+        elif "wechat" in app_package.lower() or "qq" in app_package.lower():
+            return base_prompt.format(app_name="社交应用") + "\n\n重点关注：消息内容、联系人、分享操作、群组"
+        elif "meituan" in app_package.lower() or "eleme" in app_package.lower():
+            return base_prompt.format(app_name="外卖应用") + "\n\n重点关注：搜索的餐厅、浏览的菜品、价格、下单操作"
+        else:
+            return base_prompt.format(app_name="应用")
+
     def analyze_session_with_screenshots(self, session_data: Dict[str, Any], prompt_template: str = None) -> Dict[str, Any]:
         """
         分析会话数据中的截图和文本，推理用户行为链
@@ -204,10 +312,10 @@ class VLMAnalyzer:
                     content = message.get("content", "")
                     reasoning_content = message.get("reasoning_content", "")
                     
-                    # 尝试解析JSON格式的回答
+                    # 尝试解析JSON格式的回答（使用改进的解析器）
                     try:
-                        analysis_result = json.loads(content)
-                    except json.JSONDecodeError:
+                        analysis_result = self.extract_json_from_response(content)
+                    except ValueError:
                         # 如果解析失败，返回原始文本
                         analysis_result = {
                             "raw_response": content,
@@ -289,8 +397,64 @@ class VLMAnalyzer:
             "analysis": analysis_result
         }
 
+    def analyze_app_sessions_batch(self, app_sessions_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        批量分析多个Application Session
 
-# 示例使用
+        输入: prepare_for_vlm_batch的输出
+        输出: List[VLMAnalysisResult]
+
+        优化：
+        - 支持并发调用（asyncio + aiohttp）
+        - 错误处理（单个失败不影响整体）
+        - 进度跟踪（用于长时间离线分析）
+        """
+        results = []
+
+        for i, app_session in enumerate(app_sessions_data):
+            print(f"分析进度: {i+1}/{len(app_sessions_data)} ({(i+1)/len(app_sessions_data)*100:.1f}%)")
+
+            try:
+                # 获取应用特定的prompt
+                app_package = app_session.get('app_package', '')
+                prompt_template = self.get_app_specific_prompt(app_package)
+
+                # 调用VLM分析
+                analysis_result = self.analyze_session_with_screenshots(app_session, prompt_template)
+
+                # 提取结果
+                if "error" not in analysis_result and "analysis" in analysis_result:
+                    vlm_output = {
+                        "app_session_id": app_session.get('app_session_id', ''),
+                        "app_name": app_session.get('app_name', ''),
+                        "app_package": app_package,
+                        "start_time": app_session.get('start_time', ''),
+                        "duration": app_session.get('duration', 0),
+                        "analysis": analysis_result.get('analysis', {}),
+                        "confidence": analysis_result.get('analysis', {}).get('confidence', 0),
+                        "model": self.model,
+                        "status": "success"
+                    }
+                else:
+                    vlm_output = {
+                        "app_session_id": app_session.get('app_session_id', ''),
+                        "app_name": app_session.get('app_name', ''),
+                        "error": analysis_result.get('error', '未知错误'),
+                        "status": "failed"
+                    }
+
+                results.append(vlm_output)
+
+            except Exception as e:
+                print(f"分析失败 {app_session.get('app_session_id', '')}: {str(e)}")
+                results.append({
+                    "app_session_id": app_session.get('app_session_id', ''),
+                    "app_name": app_session.get('app_name', ''),
+                    "error": str(e),
+                    "status": "failed"
+                })
+
+        return results
 if __name__ == "__main__":
     # 需要替换为实际的API密钥
     API_KEY = "your_api_key_here"

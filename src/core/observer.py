@@ -2,7 +2,7 @@
 """
 用户观察者模块 - 监控用户行为并存储到知识库
 """
-
+#我暂时注释掉了两处对graphrag的使用，来调试之前的学习部分
 import os
 import sys
 import time
@@ -15,10 +15,8 @@ from src.learning.behavior_analyzer import BehaviorAnalyzer, DataCollector
 from src.learning.vlm_analyzer import VLMAnalyzer
 
 # 导入graphrag相关模块
-from graphrag.simple_graphrag.simplegraph import SimpleGraph
+#from graphrag.simple_graphrag.simplegraph import SimpleGraph
 
-# 导入本地模块
-from .knowledge_base import KnowledgeBase, UserInteraction
 
 
 class UserObserver:
@@ -34,7 +32,6 @@ class UserObserver:
         """
         self.device_id = device_id
         self.model_config = model_config
-        self.knowledge_base = KnowledgeBase()
         self.behavior_analyzer = BehaviorAnalyzer()
         self.vlm_analyzer = None
         self.graphrag = None
@@ -53,9 +50,9 @@ class UserObserver:
             )
         
         # 初始化GraphRAG
-        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'graphrag', 'config.yaml')
-        if os.path.exists(config_path):
-            self.graphrag = SimpleGraph(config_path=config_path)
+        # config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'graphrag', 'config.yaml')
+        # if os.path.exists(config_path):
+        #     self.graphrag = SimpleGraph(config_path=config_path)
         
         # 初始化数据收集器
         self.data_collector = DataCollector()
@@ -82,7 +79,7 @@ class UserObserver:
         end_time = time.time() + duration
         
         # 启动数据收集
-        self.data_collector.start_collection()
+        self.data_collector.start_collection(duration_seconds=duration)
         
         try:
             while time.time() < end_time and self.is_learning:
@@ -97,7 +94,7 @@ class UserObserver:
         print("持续学习模式已启动，按Ctrl+C停止")
         
         # 启动数据收集
-        self.data_collector.start_collection()
+        self.data_collector.start_collection(duration_seconds=60)
         
         try:
             while self.is_learning:
@@ -127,8 +124,12 @@ class UserObserver:
         """
         分析收集到的数据
 
-        注意：当前实现通过行为分析器获取会话数据，然后调用VLM分析。
-        原始的单张截图分析已弃用，因为VLM的analyze_image方法不存在。
+        新流程（Application Session级）:
+        1. 获取所有Session数据
+        2. 分割为Application Sessions
+        3. 批量调用VLM分析
+        4. LLM汇总生成自然语言记录
+        5. 存储结果
         """
         if not self.vlm_analyzer:
             print("VLM分析器未初始化，跳过分析")
@@ -136,25 +137,57 @@ class UserObserver:
 
         print("正在处理原始数据并构建会话...")
 
-        # 获取最新的 Session 数据
-        latest_session = self.behavior_analyzer.get_latest_session_for_llm()
-
-        if not latest_session:
-            print("未生成有效的会话数据，跳过 VLM 分析")
+        # 1. 获取所有Session
+        all_sessions = self.behavior_analyzer.get_all_sessions()
+        if not all_sessions:
+            print("未找到任何会话数据，跳过分析")
             return
 
-        print("调用 VLM 分析用户行为...")
-        # 调用正确的方法
-        try:
-            analysis_result = self.vlm_analyzer.analyze_session_with_screenshots(latest_session)
+        print(f"共{len(all_sessions)}个Session待分析")
 
-            if "error" not in analysis_result and "analysis" in analysis_result:
-                final_analysis = analysis_result["analysis"]
-                self._store_analysis_result(latest_session, final_analysis)
-            else:
-                print(f"VLM 分析失败: {analysis_result.get('error')}")
+        # 2. 准备VLM批量输入
+        app_sessions_data = self.behavior_analyzer.prepare_for_vlm_batch(all_sessions)
+        print(f"分割为{len(app_sessions_data)}个Application Session")
+
+        if not app_sessions_data:
+            print("未生成任何Application Session，跳过分析")
+            return
+
+        # 3. 批量VLM分析
+        print("调用VLM分析用户行为...")
+        try:
+            vlm_results = self.vlm_analyzer.analyze_app_sessions_batch(app_sessions_data)
+            successful_count = len([r for r in vlm_results if r.get('status') == 'success'])
+            print(f"VLM分析完成，成功{successful_count}/{len(vlm_results)}个")
+
+            # 4. LLM汇总
+            print("调用LLM汇总跨应用行为...")
+            from src.learning.behavior_summarizer import BehaviorSummarizer
+
+            # 从config.json读取summary_config
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'config.json')
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                summary_config = config.get('summary_config', {})
+
+            summarizer = BehaviorSummarizer(summary_config)
+            natural_language_records = summarizer.summarize_cross_app_behavior(vlm_results)
+
+            print(f"LLM汇总完成，生成{len(natural_language_records)}条操作记录")
+
+            # 5. 存储结果
+            final_result = {
+                "app_sessions": app_sessions_data,
+                "vlm_outputs": vlm_results,
+                "summary": natural_language_records,
+                "timestamp": __import__('datetime').datetime.now().isoformat()
+            }
+            self._store_analysis_result(all_sessions, final_result)
+
         except Exception as e:
-            print(f"VLM分析过程出错: {e}")
+            print(f"VLM/LLM分析过程出错: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _store_analysis_result(self, data: Dict[str, Any], analysis_result: Dict[str, Any]):
         """
@@ -175,21 +208,6 @@ class UserObserver:
         main_action = analysis_result.get('main_action', analysis_result.get('action', 'unknown action'))
         intent = analysis_result.get('intent', 'unknown intent')
 
-        # 使用 UserInteraction dataclass
-        interaction = UserInteraction(
-            timestamp=timestamp,
-            app=app_name,
-            action=main_action,
-            intent=intent,
-            context={
-                "raw_session_id": data.get("session_info", {}).get("start_time") if isinstance(data, dict) and 'session_info' in data else None
-            },
-            screenshot_path=None,  # Session 可能包含多张截图，这里设为 None
-            success=True
-        )
-
-        self.knowledge_base.add_interaction(interaction)
-
         # 存储到GraphRAG（如果需要，可以在这里添加GraphRAG存储逻辑）
         # 当前知识库模块已经在 add_interaction 中处理了 GraphRAG 存储
     
@@ -199,11 +217,3 @@ class UserObserver:
         if self.learning_thread and self.learning_thread.is_alive():
             self.learning_thread.join(timeout=5)
         print("学习模式已停止")
-    
-    def get_user_habits(self, app: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
-        """获取用户习惯"""
-        return self.knowledge_base.query_habits(app=app, limit=limit)
-    
-    def search_related_habits(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """搜索相关用户习惯"""
-        return self.knowledge_base.search_habits(query=query, limit=limit)

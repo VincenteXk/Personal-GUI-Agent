@@ -1,0 +1,61 @@
+{
+  "context_window": {
+    "start_time": "2026-01-09T22:41:10.457000Z",
+    "end_time": "2026-01-09T22:42:24.223000+00:00+00:00Z",
+    "duration_minutes": 1.2294333333333334
+  },
+  "app_sessions": [],
+  "summary_text": "。",
+  "search_content": [],
+  "events": [
+    {
+      "timestamp": "2026-01-09T22:41:10.457000Z",
+      "source": "logcat",
+      "event_type": "activity_change",
+      "app_package": "com.android.settings",
+      "activity": "com.android.settings/.Settings"
+    },
+    {
+      "timestamp": "2026-01-09T22:41:13.887000Z",
+      "source": "logcat",
+      "event_type": "activity_change",
+      "app_package": "cmp=com.android.settings",
+      "activity": "cmp=com.android.settings/.Settings$AdvancedSettingsActivity"
+    },
+    {
+      "timestamp": "2026-01-09T22:41:38.468000Z",
+      "source": "logcat",
+      "event_type": "activity_change",
+      "app_package": "cmp=com.android.settings",
+      "activity": "cmp=com.android.settings/.DevelopmentSettings"
+    },
+    {
+      "timestamp": "2026-01-09T22:41:57.443000Z",
+      "source": "logcat",
+      "event_type": "activity_change",
+      "app_package": "cmp=com.android.settings",
+      "activity": "cmp=com.android.settings/.Settings$OptionsActivity"
+    },
+    {
+      "timestamp": "2026-01-09T22:42:14.852000Z",
+      "source": "logcat",
+      "event_type": "activity_change",
+      "app_package": "com.android.permissioncontroller",
+      "activity": "com.android.permissioncontroller/.appbehaviorrecord.PermissionPrivacyActivity"
+    },
+    {
+      "timestamp": "2026-01-09T22:42:18.907000Z",
+      "source": "logcat",
+      "event_type": "activity_change",
+      "app_package": "com.android.permissioncontroller",
+      "activity": "com.android.permissioncontroller/.permissionplus.ui.AppPermissionManageActivity}"
+    },
+    {
+      "timestamp": "2026-01-09T22:42:24.223000Z",
+      "source": "logcat",
+      "event_type": "activity_change",
+      "app_package": "cmp=com.android.permissioncontroller",
+      "activity": "cmp=com.android.permissioncontroller/.permissionplus.ui.AllPermissionsActivity}"
+    }
+  ]
+}

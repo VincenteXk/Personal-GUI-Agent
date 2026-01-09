@@ -125,18 +125,11 @@ Personal-GUI-Agent/
 - 启动学习循环
 - 分析收集的数据
 - 存储分析结果到知识库
-
 ### 3. 知识库模块 (src/core/knowledge_base.py)
-
-`knowledge_base.py` 使用 NetworkX 构建有向图存储用户交互数据。主要功能：
-
-- 加载/保存知识库
-- 添加用户交互数据
-- 同步到 GraphRAG
-
+已删除
 ### 4. 指令优化器模块 (src/core/refiner.py)
 
-`refiner.py` 实现了 `InstructionRefiner` 类，使用知识库中的用户习惯优化指令。
+`refiner.py` 实现了 `InstructionRefiner` 类，用于优化用户指令。
 
 ### 5. 学习模式模块 (src/learning/)
 
@@ -196,8 +189,8 @@ Personal-GUI-Agent/
 ## 系统工作流程
 
 1. **初始化阶段**：检查系统环境和模型 API 连接
-2. **学习阶段**：收集用户行为，使用 VLM 分析，存储到知识库和 GraphRAG
-3. **优化阶段**：接收指令并结合用户习惯优化
+2. **学习阶段**：收集用户行为，使用 VLM 分析
+3. **优化阶段**：接收指令并优化
 4. **执行阶段**：通过 ADB 在 Android 设备上执行操作
 5. **反馈阶段**：记录执行结果和用户反馈
 
@@ -325,10 +318,9 @@ dependencies = [
 系统设计为模块化架构，可以方便地扩展：
 
 1. **添加新的分析器**：在 `src/learning/` 下添加新的分析模块
-2. **扩展知识库**：修改 `src/core/knowledge_base.py` 添加新的数据结构
-3. **优化指令处理**：修改 `src/core/refiner.py` 添加新的优化策略
-4. **扩展 GraphRAG**：在 `graphrag/simple_graphrag/src/` 下添加新模块
-5. **添加新的工具函数**：在 `src/shared/utils.py` 中添加通用工具函数
+2. **优化指令处理**：修改 `src/core/refiner.py` 添加新的优化策略
+3. **扩展 GraphRAG**：在 `graphrag/simple_graphrag/src/` 下添加新模块
+4. **添加新的工具函数**：在 `src/shared/utils.py` 中添加通用工具函数
 
 ## 注意事项
 

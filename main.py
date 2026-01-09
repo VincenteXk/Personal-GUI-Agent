@@ -34,7 +34,6 @@ from src.learning.vlm_analyzer import VLMAnalyzer
 # 导入本地模块
 from src.core.observer import UserObserver
 from src.core.refiner import InstructionRefiner
-from src.core.knowledge_base import KnowledgeBase
 from src.shared.utils import check_model_api
 
 
@@ -56,7 +55,6 @@ class PersonalUI:
         self.args = args
         # 加载配置并合并命令行参数
         self.config = self._load_and_merge_config(config_path)
-        self.knowledge_base = KnowledgeBase()
         self.refiner = InstructionRefiner(model_config=self._get_model_config())
         self.observer = UserObserver()
         self.phone_agent = None
@@ -156,6 +154,7 @@ class PersonalUI:
                 api_key=learn_conf["api_key"],
                 model=learn_conf["model"]
             )
+            print("✅ VLM Analyzer 已配置")
         else:
             print("⚠️ VLM Analyzer 未配置，某些功能可能受限")
 
@@ -163,7 +162,7 @@ class PersonalUI:
         if self._check_graphrag_api():
             print("✅ GraphRAG API连接成功")
         else:
-            print("⚠️ 无法连接到GraphRAG API，仅使用本地知识库")
+            print("⚠️ 无法连接到GraphRAG API")
     
     def _check_graphrag_api(self) -> bool:
         """检查GraphRAG API是否可用"""
@@ -191,11 +190,18 @@ class PersonalUI:
             if sessions and self.vlm_analyzer:
                 # 分析收集到的数据
                 print("🔍 分析用户行为数据...")
+
+                # 转换最新会话为LLM格式
+                llm_data = self.behavior_analyzer.get_latest_session_for_llm()
+                if not llm_data:
+                    print("⚠️ 无法生成LLM数据")
+                    return
+
                 output_dir = self.config["learning_config"]["output_dir"]
                 sessions_dir = os.path.join(output_dir, "processed")
-                
+
                 result = self.vlm_analyzer.analyze_latest_session(sessions_dir)
-                
+
                 if "error" not in result:
                     # 将分析结果存储到GraphRAG
                     self._store_analysis_to_graphrag(result)
@@ -366,7 +372,7 @@ def main():
 
     # 根据模式运行
     if args.mode == "learning":
-        app.start_learning_mode()
+        app.start_learning_mode(duration=60)
     elif args.mode == "execution":
         app.start_execution_mode()
     else:

@@ -11,7 +11,7 @@ TaskAgent (调度层)
     ↓ 委托任务
 TaskExecutor (执行层)
     ↓ 调用
-具体服务 (AutoGLM / GraphRAG / KnowledgeBase)
+具体服务 (AutoGLM / GraphRAG)
 ```
 
 ## 可用的执行器

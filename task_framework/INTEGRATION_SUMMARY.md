@@ -237,12 +237,6 @@ graphrag_config = GraphRAGConfig(
 
 ### src/core 模块
 
-#### knowledge_base.py
-
-- 提供图结构存储用户交互数据
-- 支持本地 NetworkX 和 GraphRAG 双存储
-- 提供搜索、查询、统计功能
-
 #### observer.py
 
 - 用户行为监控（当前未集成到 TaskExecutor）

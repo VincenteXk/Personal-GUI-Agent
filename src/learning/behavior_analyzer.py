@@ -12,6 +12,7 @@ from queue import Queue
 import logging
 from typing import Dict, List, Tuple, Optional, Any
 import queue
+import shutil
 
 from src.shared.config import APP_PACKAGE_MAPPINGS
 
@@ -23,7 +24,7 @@ learning_thread = None
 class ScreenshotCollector:
     """截图收集器，负责在特定事件触发时捕获屏幕截图"""
     
-    def __init__(self, output_dir: str = "../data/screenshots"):
+    def __init__(self, output_dir: str = "data/screenshots"):
         self.output_dir = output_dir
         self.ensure_output_dir()
         self.stop_event = threading.Event()
@@ -80,7 +81,7 @@ class ScreenshotCollector:
             print(f"截图失败: {e}")
             return None
     
-    def start_monitoring(self, duration_seconds: int = 300):
+    def start_monitoring(self, duration_seconds: int = 60):
         """启动截图监控线程
         
         Args:
@@ -134,7 +135,7 @@ class ScreenshotCollector:
 class DataCollector:
     """数据收集器，负责从三个adb命令收集原始数据"""
     
-    def __init__(self, output_dir: str = "../data/raw"):
+    def __init__(self, output_dir: str = "data/raw"):
         self.output_dir = output_dir
         self.ensure_output_dir()
         self.stop_event = threading.Event()
@@ -146,7 +147,7 @@ class DataCollector:
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
     
-    def collect_logcat(self, duration_seconds: int = 300):
+    def collect_logcat(self, duration_seconds: int = 60):
         """收集logcat数据"""
         filename = os.path.join(self.output_dir, f"logcat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
         with open(filename, 'w', encoding='utf-8') as f:
@@ -165,26 +166,61 @@ class DataCollector:
             process.terminate()
             return filename
     
-    def collect_uiautomator(self, duration_seconds: int = 300):
+    def _extract_event_type_from_line(self, line: str) -> str:
+        """从UIAutomator事件行提取事件类型
+
+        Args:
+            line: UIAutomator事件行
+
+        Returns:
+            事件类型字符串，如 'click', 'swipe', 'text_input' 等
+        """
+        try:
+            # 查找 EventType: 字段
+            event_type_match = re.search(r'EventType: (\w+)', line)
+            if not event_type_match:
+                return None
+
+            event_type = event_type_match.group(1)
+
+            # 将UIAutomator事件类型映射到我们的事件类型
+            if "CLICKED" in event_type or "CLICK" in event_type or "VIEW_CLICKED" in event_type:
+                return "click"
+            elif "TEXT_CHANGED" in event_type or "TEXT" in event_type or "VIEW_TEXT_CHANGED" in event_type:
+                return "text_input"
+            elif "SCROLLED" in event_type or "SCROLL" in event_type or "VIEW_SCROLLED" in event_type:
+                return "swipe"
+
+            return None
+        except Exception:
+            return None
+
+    def collect_uiautomator(self, duration_seconds: int = 60):
         """收集uiautomator事件数据"""
         filename = os.path.join(self.output_dir, f"uiautomator_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
         with open(filename, 'w', encoding='utf-8') as f:
             # Windows下使用PowerShell命令
             cmd = ['adb', 'shell', 'uiautomator', 'events']
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace')
-            
+
             start_time = time.time()
             while not self.stop_event.is_set() and (time.time() - start_time) < duration_seconds:
                 line = process.stdout.readline()
                 if line:
                     f.write(line)
+
+                    # 新增：实时解析事件并触发截图
+                    if 'EventType:' in line:
+                        event_type = self._extract_event_type_from_line(line)
+                        if event_type in ['click', 'swipe', 'text_input']:
+                            self.screenshot_collector.trigger_screenshot(event_type=event_type)
                 else:
                     time.sleep(0.1)
-            
+
             process.terminate()
             return filename
     
-    def collect_window(self, duration_seconds: int = 300, interval_seconds: int = 2):
+    def collect_window(self, duration_seconds: int = 60, interval_seconds: int = 2):
         """收集window状态数据"""
         filename = os.path.join(self.output_dir, f"window_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
         with open(filename, 'w', encoding='utf-8') as f:
@@ -210,7 +246,7 @@ class DataCollector:
             
             return filename
     
-    def start_collection(self, duration_seconds: int = 300):
+    def start_collection(self, duration_seconds: int = 60):
         """启动所有数据收集线程
         
         Args:
@@ -1004,14 +1040,305 @@ class DataProcessor:
         # 添加最后一个搜索序列（如果有）
         if current_search is not None:
             search_events.append(current_search)
-        
+
         return search_events
+
+    def segment_into_app_sessions(self, session):
+        """
+        将Session分割为多个Application Session
+
+        分割规则:
+        1. 应用切换 → 新AppSession
+        2. 同一应用前后间隔>5分钟 → 新AppSession
+
+        返回: List[Application Session]
+        """
+        app_sessions = []
+
+        # 遍历当前Session中已经按应用分组的app_sessions
+        for app_data in session.get('app_sessions', []):
+            app_package = app_data.get('app_package', '')
+            app_name = app_data.get('app_name', '')
+            activities = app_data.get('activities', [])
+
+            if not activities:
+                continue
+
+            # 检查是否需要分割（同一应用的多次使用）
+            # 策略：如果activities之间有大于5分钟的间隔，则分割
+            sub_sessions = self.split_activities_by_gap(activities, gap_threshold_seconds=300)
+
+            for i, activity_group in enumerate(sub_sessions):
+                if not activity_group:
+                    continue
+
+                start_time = activity_group[0].get('start_time', '')
+                end_time = self._calculate_app_end_time(activity_group)
+
+                app_session = {
+                    "app_session_id": f"{app_package}_{start_time.replace(':', '-').replace('+', '_')}",
+                    "app_name": app_name,
+                    "app_package": app_package,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "activities": activity_group,
+                    "screenshots": self._extract_screenshots_in_timerange(
+                        session, start_time, end_time
+                    )
+                }
+
+                # 计算时长
+                try:
+                    start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                    end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                    app_session['duration'] = (end_dt - start_dt).total_seconds()
+                except:
+                    app_session['duration'] = 0
+
+                # 计算交互次数
+                app_session['interactions_count'] = sum(
+                    len(act.get('interactions', [])) for act in activity_group
+                )
+
+                app_sessions.append(app_session)
+
+        return app_sessions
+
+    def split_activities_by_gap(self, activities, gap_threshold_seconds=300):
+        """
+        按时间间隔分割Activity列表
+
+        示例:
+        输入: [微信Activity 10:00, 微信Activity 10:02, 微信Activity 11:00]
+        输出: [[微信Activity 10:00, 微信Activity 10:02], [微信Activity 11:00]]
+        """
+        if not activities:
+            return []
+
+        groups = []
+        current_group = [activities[0]]
+
+        for i in range(1, len(activities)):
+            try:
+                prev_time = datetime.fromisoformat(activities[i-1].get('start_time', '').replace('Z', '+00:00'))
+                curr_time = datetime.fromisoformat(activities[i].get('start_time', '').replace('Z', '+00:00'))
+                gap = (curr_time - prev_time).total_seconds()
+
+                if gap > gap_threshold_seconds:
+                    # 间隔过大，开始新组
+                    groups.append(current_group)
+                    current_group = [activities[i]]
+                else:
+                    current_group.append(activities[i])
+            except:
+                # 时间解析失败，添加到当前组
+                current_group.append(activities[i])
+
+        groups.append(current_group)
+        return groups
+
+    def _calculate_app_end_time(self, activities):
+        """计算应用会话的结束时间"""
+        if not activities:
+            return datetime.now().isoformat() + "Z"
+
+        last_activity = activities[-1]
+
+        # 尝试从最后一个interaction的time_offset计算
+        interactions = last_activity.get('interactions', [])
+        if interactions:
+            max_offset = max(
+                float(i.get('time_offset', 0)) for i in interactions
+            )
+            try:
+                start_dt = datetime.fromisoformat(last_activity.get('start_time', '').replace('Z', '+00:00'))
+                end_dt = start_dt + __import__('datetime').timedelta(seconds=max_offset + 2)
+                return end_dt.isoformat() + "Z"
+            except:
+                pass
+
+        # 默认返回最后一个activity的start_time
+        return last_activity.get('start_time', datetime.now().isoformat() + "Z")
+
+    def _extract_screenshots_in_timerange(self, session, start_time, end_time):
+        """提取时间范围内的截图"""
+        try:
+            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        except:
+            return []
+
+        screenshots = []
+        for screenshot in session.get('screenshots', []):
+            try:
+                ss_time = datetime.fromisoformat(screenshot.get('timestamp', '').replace('Z', '+00:00'))
+                if start_dt <= ss_time <= end_dt:
+                    screenshots.append(screenshot)
+            except:
+                continue
+
+        return screenshots
+
+
+    def fix_activity_durations(self, activities):
+        """
+        修复Activity的duration字段
+
+        方法1: 通过下一个Activity的start_time计算
+        方法2: 通过最后一个interaction的time_offset估算
+        """
+        if not activities:
+            return activities
+
+        for i, activity in enumerate(activities):
+            if activity.get('duration', 0) > 0:
+                continue  # 已有duration跳过
+
+            # 获取下一个Activity的开始时间
+            if i < len(activities) - 1:
+                try:
+                    next_start = datetime.fromisoformat(activities[i+1].get('start_time', '').replace('Z', '+00:00'))
+                    curr_start = datetime.fromisoformat(activity.get('start_time', '').replace('Z', '+00:00'))
+                    duration = (next_start - curr_start).total_seconds()
+                except:
+                    duration = 0
+            else:
+                # 最后一个Activity: 用最后一个interaction的offset估算
+                interactions = activity.get('interactions', [])
+                if interactions:
+                    try:
+                        max_offset = max(
+                            float(i.get('time_offset', 0)) for i in interactions
+                        )
+                        duration = max_offset + 2  # 加2秒buffer
+                    except:
+                        duration = 5
+                else:
+                    duration = 5  # 默认5秒
+
+            activity['duration'] = max(duration, 0)
+
+        return activities
+
+
+    def allocate_screenshots_for_app_session(self, app_session, quota=8):
+        """
+        为单个Application Session分配截图
+
+        策略:
+        1. 修复Activity duration
+        2. 过滤短Activity (<5秒)
+        3. 保底分配 (每个Activity ≥1张) + 时长加权
+        4. 智能采样 (避开转场动画2秒，均匀分布)
+
+        特殊处理:
+        - 如果Activity数量 > quota: 按交互次数排序，优先分配
+        - 如果没有有效Activity: 降级到均匀采样
+
+        返回: List[截图]（长度≤quota）
+        """
+        activities = self.fix_activity_durations(app_session.get('activities', []))
+        valid_activities = [a for a in activities if a.get('duration', 0) >= 5]
+
+        if not valid_activities:
+            # 降级：均匀采样
+            return self._uniform_sample_screenshots(
+                app_session.get('screenshots', []), quota
+            )
+
+        # 保底分配
+        base_allocation = {i: 1 for i in range(len(valid_activities))}
+        remaining = quota - len(valid_activities)
+
+        if remaining < 0:
+            # Activity数量超过配额，只能每个取1张或部分跳过
+            # 策略：按交互次数排序，优先给交互多的Activity
+            valid_activities_with_idx = [
+                (i, a) for i, a in enumerate(valid_activities)
+            ]
+            valid_activities_with_idx.sort(
+                key=lambda x: len(x[1].get('interactions', [])), reverse=True
+            )
+            valid_activities = [a for _, a in valid_activities_with_idx[:quota]]
+            base_allocation = {i: 1 for i in range(len(valid_activities))}
+            remaining = 0
+
+        # 时长加权分配
+        total_duration = sum(a.get('duration', 0) for a in valid_activities)
+        if total_duration > 0:
+            for i, activity in enumerate(valid_activities):
+                weight = activity.get('duration', 0) / total_duration
+                additional = int(remaining * weight)
+                base_allocation[i] += additional
+
+        # 智能采样
+        selected_screenshots = []
+        for i, activity in enumerate(valid_activities):
+            quota_for_activity = base_allocation.get(i, 1)
+            duration = activity.get('duration', 0)
+
+            # 生成采样时刻
+            if quota_for_activity == 1:
+                sample_offsets = [min(2.0, duration / 2)]
+            elif quota_for_activity == 2:
+                sample_offsets = [
+                    min(2.0, duration * 0.2),
+                    max(duration - 2.0, duration * 0.8)
+                ]
+            else:
+                interval = duration / (quota_for_activity - 1)
+                sample_offsets = [j * interval for j in range(quota_for_activity)]
+
+            # 从interactions中找最接近的截图
+            for offset in sample_offsets:
+                screenshot = self._find_nearest_screenshot_in_activity(
+                    activity, offset
+                )
+                if screenshot:
+                    selected_screenshots.append(screenshot)
+
+        return selected_screenshots[:quota]  # 确保不超配额
+
+    def _uniform_sample_screenshots(self, screenshots, quota):
+        """均匀采样截图"""
+        if not screenshots or quota <= 0:
+            return []
+
+        if len(screenshots) <= quota:
+            return screenshots
+
+        # 均匀采样
+        indices = [int(i * len(screenshots) / quota) for i in range(quota)]
+        return [screenshots[i] for i in indices]
+
+    def _find_nearest_screenshot_in_activity(self, activity, offset):
+        """从Activity的interactions中找到最接近目标offset的截图"""
+        interactions = activity.get('interactions', [])
+        screenshot_interactions = [
+            i for i in interactions if i.get('action') == 'screenshot'
+        ]
+
+        if not screenshot_interactions:
+            return None
+
+        # 找最接近的
+        best_screenshot = None
+        best_diff = float('inf')
+
+        for ss in screenshot_interactions:
+            ss_offset = float(ss.get('time_offset', 0))
+            diff = abs(ss_offset - offset)
+            if diff < best_diff:
+                best_diff = diff
+                best_screenshot = ss
+
+        return best_screenshot
 
 
 class BehaviorAnalyzer:
     """行为分析器主类"""
-    
-    def __init__(self, output_dir: str = "../data"):
+
+    def __init__(self, output_dir: str = "data"):
         self.output_dir = output_dir
         self.sessions_dir = os.path.join(output_dir, "sessions")
         self.processed_dir = os.path.join(output_dir, "processed")
@@ -1176,10 +1503,108 @@ class BehaviorAnalyzer:
                 
         except Exception as e:
             print(f"后台处理数据时出错: {str(e)}")
-    
 
-    
-    def collect_and_process(self, duration_seconds: int = 300):
+    def prepare_for_vlm_batch(self, sessions):
+        """
+        为批量VLM分析准备数据
+
+        输入: List[Session] (可能是数十个Session)
+        输出: List[AppSessionVLMInput]
+
+        流程:
+        1. 遍历所有Session
+        2. 分割为Application Sessions
+        3. 为每个AppSession分配截图
+        4. 构建VLM输入格式
+        """
+        app_sessions_data = []
+
+        for session in sessions:
+            # 分割为Application Sessions
+            app_sessions = self.processor.segment_into_app_sessions(session)
+
+            for app_session in app_sessions:
+                # 为该AppSession分配截图
+                selected_screenshots = self.processor.allocate_screenshots_for_app_session(
+                    app_session, quota=8
+                )
+
+                # 构建VLM输入格式
+                activities_summary = self._build_activities_summary(app_session.get('activities', []))
+
+                vlm_input = {
+                    "app_session_id": app_session.get('app_session_id', ''),
+                    "app_name": app_session.get('app_name', ''),
+                    "app_package": app_session.get('app_package', ''),
+                    "start_time": app_session.get('start_time', ''),
+                    "end_time": app_session.get('end_time', ''),
+                    "duration": app_session.get('duration', 0),
+                    "activities_summary": activities_summary,
+                    "screenshots": selected_screenshots,
+                    "interactions": self._extract_interactions(app_session.get('activities', [])),
+                    "search_queries": self._extract_search_queries(app_session.get('activities', []))
+                }
+
+                app_sessions_data.append(vlm_input)
+
+        return app_sessions_data
+
+    def _build_activities_summary(self, activities):
+        """构建Activity摘要"""
+        if not activities:
+            return "无活动"
+
+        activity_names = [a.get('name', '未知').split('/')[-1] for a in activities]
+        duration_total = sum(a.get('duration', 0) for a in activities)
+        interaction_count = sum(len(a.get('interactions', [])) for a in activities)
+
+        return f"访问{len(activities)}个页面，停留{int(duration_total)}秒，{interaction_count}次交互"
+
+    def _extract_interactions(self, activities):
+        """提取所有交互事件"""
+        interactions = []
+        for activity in activities:
+            for interaction in activity.get('interactions', []):
+                if interaction.get('action') != 'screenshot':
+                    interactions.append({
+                        "action": interaction.get('action', ''),
+                        "target": interaction.get('target', ''),
+                        "time_offset": interaction.get('time_offset', 0),
+                        "content": interaction.get('content', '')
+                    })
+        return interactions
+
+    def _extract_search_queries(self, activities):
+        """提取搜索查询"""
+        search_queries = []
+        for activity in activities:
+            for interaction in activity.get('interactions', []):
+                if interaction.get('action') == 'text_input' and interaction.get('content'):
+                    search_queries.append({
+                        "content": interaction.get('content', ''),
+                        "time_offset": interaction.get('time_offset', 0)
+                    })
+        return search_queries
+
+    def get_all_sessions(self):
+        """获取所有已处理的Session"""
+        sessions = []
+        if not os.path.exists(self.sessions_dir):
+            return sessions
+
+        for filename in os.listdir(self.sessions_dir):
+            if filename.endswith('.json'):
+                filepath = os.path.join(self.sessions_dir, filename)
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        session = json.load(f)
+                        sessions.append(session)
+                except:
+                    continue
+
+        return sessions
+
+    def collect_and_process(self, duration_seconds: int = 60):
         """收集并处理数据"""
         print(f"开始收集数据，将持续 {duration_seconds} 秒...")
         

@@ -1,0 +1,41 @@
+[
+  {
+    "timestamp": "2026-01-10T00:50:01.518000Z",
+    "app_package": "com.sankuai.meituan",
+    "input_sequence": [
+      "y",
+      "y",
+      "yu",
+      "yu",
+      "yue",
+      "yue",
+      "yuen",
+      "yuen",
+      "yuena",
+      "yuena",
+      "yuenan",
+      "yuenan",
+      "yuenanc",
+      "yuenanc",
+      "yuenanch",
+      "yuenanch",
+      "yuenanchu",
+      "yuenanchu",
+      "yuenanchun",
+      "yuenanchun",
+      "yuenanchunj",
+      "yuenanchunj",
+      "越南春卷",
+      "越南春卷"
+    ],
+    "final_text": "越南春卷"
+  },
+  {
+    "timestamp": "2026-01-10T00:50:19.958000Z",
+    "app_package": "com.tencent.mm",
+    "input_sequence": [
+      "发消息"
+    ],
+    "final_text": "发消息"
+  }
+]
