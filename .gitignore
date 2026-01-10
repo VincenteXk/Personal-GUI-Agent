@@ -223,3 +223,12 @@ uv.lock
 
 # Configuration files with sensitive data
 config.json
+
+# Data directory contents (keep directories but ignore contents)
+data/archive/*
+data/sessions/*
+data/master_index.json
+
+# Keep empty directories
+!data/archive/.gitkeep
+!data/sessions/.gitkeep
