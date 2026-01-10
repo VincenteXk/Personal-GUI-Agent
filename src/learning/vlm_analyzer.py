@@ -390,10 +390,85 @@ class VLMAnalyzer:
                 })
 
         return results
+
+    def analyze_and_save_latest_session(self, behavior_analyzer) -> Dict[str, Any]:
+        """
+        获取最新会话的LLM数据、进行VLM分析并保存结果
+
+        Args:
+            behavior_analyzer: BehaviorAnalyzer 实例
+
+        Returns:
+            {
+                "session_id": 会话ID,
+                "llm_file": LLM数据文件路径,
+                "analysis_file": 分析结果文件路径,
+                "error": 错误信息（如果有）
+            }
+        """
+        try:
+            # 1. 获取最新会话的LLM数据
+            llm_data = behavior_analyzer.get_latest_session_for_llm()
+            if not llm_data:
+                return {"error": "无法生成LLM数据"}
+
+            session_id = llm_data.get("session_id")
+            output_dir = behavior_analyzer.output_dir
+            session_folder = os.path.join(output_dir, "sessions", session_id)
+            processed_dir = os.path.join(session_folder, "processed")
+            analysis_dir = os.path.join(session_folder, "analysis")
+
+            # 2. 分析截图（如果有）
+            analysis_result = {
+                "session_id": session_id,
+                "timestamp": datetime.now().isoformat() + "Z",
+                "screenshots_analyzed": 0,
+                "analysis_results": []
+            }
+
+            if llm_data.get("screenshots"):
+                try:
+                    vlm_result = self.analyze_session_with_screenshots(llm_data)
+                    if vlm_result and "error" not in vlm_result:
+                        analysis_result["screenshots_analyzed"] = len(llm_data["screenshots"])
+                        analysis_result["analysis_results"].append(vlm_result)
+                        analysis_result["status"] = "success"
+                    else:
+                        analysis_result["status"] = "partial"
+                        analysis_result["error"] = vlm_result.get("error", "VLM分析失败")
+                except Exception as e:
+                    analysis_result["status"] = "partial"
+                    analysis_result["error"] = str(e)
+            else:
+                analysis_result["status"] = "no_screenshots"
+
+            # 3. 保存LLM数据
+            os.makedirs(processed_dir, exist_ok=True)
+            llm_file = os.path.join(processed_dir, f"{session_id}_llm.json")
+            with open(llm_file, 'w', encoding='utf-8') as f:
+                json.dump(llm_data, f, indent=2, ensure_ascii=False)
+
+            # 4. 保存分析结果
+            os.makedirs(analysis_dir, exist_ok=True)
+            analysis_file = os.path.join(analysis_dir, f"{session_id}_vlm_analysis.json")
+            with open(analysis_file, 'w', encoding='utf-8') as f:
+                json.dump(analysis_result, f, indent=2, ensure_ascii=False)
+
+            return {
+                "session_id": session_id,
+                "llm_file": llm_file,
+                "analysis_file": analysis_file,
+                "status": analysis_result.get("status", "unknown")
+            }
+
+        except Exception as e:
+            return {"error": f"分析失败: {str(e)}"}
+
+
 if __name__ == "__main__":
     # 需要替换为实际的API密钥
     API_KEY = "your_api_key_here"
-    
+
     # 创建分析器
     analyzer = VLMAnalyzer(api_key=API_KEY)
     

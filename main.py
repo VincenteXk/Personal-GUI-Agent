@@ -189,27 +189,16 @@ class PersonalUI:
             sessions = self.behavior_analyzer.collect_and_process(duration_seconds=duration)
             
             if sessions and self.vlm_analyzer:
-                # 分析收集到的数据
+                # 生成和分析LLM数据
                 print("🔍 分析用户行为数据...")
+                result = self.vlm_analyzer.analyze_and_save_latest_session(self.behavior_analyzer)
 
-                # 转换最新会话为LLM格式
-                llm_data = self.behavior_analyzer.get_latest_session_for_llm()
-                if not llm_data:
-                    print("⚠️ 无法生成LLM数据")
-                    return
-
-                output_dir = self.config["learning_config"]["output_dir"]
-                sessions_dir = os.path.join(output_dir, "processed")
-
-                result = self.vlm_analyzer.analyze_latest_session(sessions_dir)
-
-                if "error" not in result:
-                    # 将分析结果存储到GraphRAG
-                    self._store_analysis_to_graphrag(result)
+                if result and "error" not in result:
+                    print(f"✅ 分析完成: {result.get('session_id')}")
                 else:
-                    print(f"❌ VLM分析失败: {result['error']}")
+                    print(f"⚠️ 分析失败: {result.get('error', '未知错误')}")
             elif not self.vlm_analyzer:
-                raise RuntimeError("VLM Analyzer 未配置，无法进行学习模式分析")
+                print("⚠️ VLM Analyzer 未配置，跳过视觉分析")
             else:
                 print("⚠️ 未收集到足够的会话数据")
     

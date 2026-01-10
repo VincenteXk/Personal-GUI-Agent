@@ -2057,42 +2057,63 @@ class BehaviorAnalyzer:
     
     def get_latest_session_for_llm(self):
         """获取最新的会话数据并转换为适合LLM处理的格式"""
-        # 获取最新的会话文件
-        session_files = [f for f in os.listdir(self.sessions_dir) if f.endswith(".json")]
-        if not session_files:
+        from src.learning.utils import load_session_metadata, load_session_events, list_all_sessions
+
+        # 获取所有会话列表
+        all_sessions = list_all_sessions(self.output_dir)
+        if not all_sessions:
             return None
-        
-        # 按修改时间排序，获取最新的
-        session_files.sort(key=lambda x: os.path.getmtime(os.path.join(self.sessions_dir, x)))
-        latest_session_file = os.path.join(self.sessions_dir, session_files[-1])
-        
-        # 读取会话数据
-        with open(latest_session_file, "r", encoding="utf-8") as f:
-            session_data = json.load(f)
-        
-        # 提取会话ID
-        session_id = os.path.splitext(os.path.basename(latest_session_file))[0]
-        
-        # 转换为LLM格式
-        llm_data = self.processor.prepare_for_llm(session_data)
-        
-        # 保存LLM数据
-        self.save_llm_data(llm_data, session_id=session_id)
-        
-        # 如果有截图，复制截图文件到processed目录
-        if llm_data.get("screenshots"):
-            screenshots_dir = os.path.join(self.processed_dir, "screenshots")
-            os.makedirs(screenshots_dir, exist_ok=True)
-            
-            for screenshot in llm_data["screenshots"]:
-                src_path = screenshot["filepath"]
-                if os.path.exists(src_path):
-                    filename = os.path.basename(src_path)
-                    dst_path = os.path.join(screenshots_dir, filename)
-                    shutil.copy2(src_path, dst_path)
-                    # 更新路径为相对路径
-                    screenshot["filepath"] = f"screenshots/{filename}"
-        
+
+        # 按修改时间获取最新会话（最后一个）
+        latest_session_id = all_sessions[-1]
+
+        # 加载会话元数据和事件
+        metadata = load_session_metadata(self.output_dir, latest_session_id)
+        if not metadata:
+            return None
+
+        # 加载会话事件
+        session_events = load_session_events(self.output_dir, latest_session_id)
+        if not session_events:
+            return None
+
+        # 构建适合LLM的数据格式
+        session_folder = os.path.join(self.output_dir, "sessions", latest_session_id)
+        processed_dir = os.path.join(session_folder, "processed")
+
+        # 读取 session_summary.json
+        summary_file = os.path.join(processed_dir, "session_summary.json")
+        llm_data = None
+        if os.path.exists(summary_file):
+            with open(summary_file, 'r', encoding='utf-8') as f:
+                llm_data = json.load(f)
+
+        if not llm_data:
+            return None
+
+        # 添加元数据信息
+        llm_data["session_id"] = latest_session_id
+        llm_data["metadata"] = metadata
+
+        # 处理截图路径
+        screenshot_dir = os.path.join(session_folder, "screenshots")
+        if os.path.exists(screenshot_dir):
+            screenshot_files = [
+                os.path.join(screenshot_dir, f)
+                for f in os.listdir(screenshot_dir)
+                if f.endswith(".png")
+            ]
+            llm_data["screenshots"] = [
+                {"filepath": f, "filename": os.path.basename(f)}
+                for f in sorted(screenshot_files)
+            ]
+
+        # 保存LLM数据到会话的processed目录
+        llm_file = os.path.join(processed_dir, f"{latest_session_id}_llm.json")
+        os.makedirs(processed_dir, exist_ok=True)
+        with open(llm_file, 'w', encoding='utf-8') as f:
+            json.dump(llm_data, f, indent=2, ensure_ascii=False)
+
         return llm_data
     
     def save_llm_data(self, session_data, filename=None, session_id=None):
