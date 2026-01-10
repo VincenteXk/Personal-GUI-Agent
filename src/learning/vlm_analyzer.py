@@ -255,19 +255,28 @@ class VLMAnalyzer:
             # 标准化路径，处理Windows路径分隔符
             if filepath:
                 filepath = os.path.normpath(filepath)
-                # 如果是相对路径，使用session_base_dir解析；否则尝试直接访问
-                if not os.path.isabs(filepath) and session_base_dir:
+
+                # 如果是绝对路径，直接使用；如果是相对路径且有session_base_dir，则相对解析
+                if os.path.isabs(filepath):
+                    full_path = filepath
+                elif session_base_dir:
                     full_path = os.path.join(session_base_dir, filepath)
                 else:
                     full_path = filepath
 
                 if os.path.exists(full_path):
-                    base64_image = self.encode_image_to_base64(filepath, base_dir=session_base_dir)
+                    base64_image = self.encode_image_to_base64(full_path)
                     if base64_image:
+                        # 根据文件扩展名判断MIME类型
+                        ext = os.path.splitext(full_path)[1].lower()
+                        mime_type = "image/png" if ext == ".png" else "image/jpeg"
+
+                        # 构建proper data URL
+                        data_url = f"data:{mime_type};base64,{base64_image}"
                         content.append({
                             "type": "image_url",
                             "image_url": {
-                                "url": base64_image
+                                "url": data_url
                             }
                         })
         
