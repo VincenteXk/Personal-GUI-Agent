@@ -28,7 +28,11 @@ def load_config():
 
     try:
         with open(config_file, "r", encoding="utf-8") as f:
-            return json.load(f)
+            config = json.load(f)
+            # Support both nested (learning_config) and flat structure
+            if "learning_config" in config:
+                return config["learning_config"]
+            return config
     except Exception as e:
         print(f"Warning: Failed to load config.json: {e}")
         return {}
@@ -288,7 +292,7 @@ def process_session(session_id: str = "20260111_054812_a216"):
                     "session_id": session_id
                 }
             else:
-                vlm_analyzer = VLMAnalyzer(api_key=api_key)
+                vlm_analyzer = VLMAnalyzer(api_key=api_key, model=config.get("model"))
                 vlm_analysis = vlm_analyzer.analyze_session_with_screenshots(llm_data)
 
                 if "error" in vlm_analysis:
@@ -335,22 +339,52 @@ def process_session(session_id: str = "20260111_054812_a216"):
                 "session_id": session_id
             }
         else:
-            behavior_summarizer = BehaviorSummarizer()
-            behavior_summary = behavior_summarizer.summarize_cross_app_behavior(vlm_analysis)
+            # Load config for LLM analysis
+            config = load_config()
+            behavior_summarizer = BehaviorSummarizer(config)
 
-            if "error" in behavior_summary:
+            # BehaviorSummarizer expects a list of VLM outputs with 'status' field
+            # Wrap the VLM analysis result appropriately
+            if isinstance(vlm_analysis, dict):
+                if "success" in vlm_analysis:
+                    # VLMAnalyzer format: {"success": true, "analysis": {...}, ...}
+                    vlm_outputs_list = [
+                        {
+                            "status": "success" if vlm_analysis.get("success") else "error",
+                            "analysis": vlm_analysis.get("analysis", {}),
+                            **vlm_analysis
+                        }
+                    ]
+                else:
+                    # Error case
+                    vlm_outputs_list = [{
+                        "status": "error",
+                        "error": vlm_analysis.get("error", "Unknown error")
+                    }]
+            else:
+                vlm_outputs_list = []
+
+            behavior_summary = behavior_summarizer.summarize_cross_app_behavior(vlm_outputs_list)
+
+            # BehaviorSummarizer returns List[str], wrap it in a dict for consistent output format
+            if isinstance(behavior_summary, list):
+                behavior_summary = {
+                    "summaries": behavior_summary,
+                    "summary_count": len(behavior_summary)
+                }
+
+            if isinstance(behavior_summary, dict) and "error" in behavior_summary:
                 print(f"  ⚠ Behavior summarization returned error:")
                 print(f"    {behavior_summary.get('error')}")
             else:
                 print(f"  ✓ Behavior summarization completed")
-                if "summary" in behavior_summary:
-                    summary_text = behavior_summary.get("summary", "N/A")
-                    if isinstance(summary_text, str):
-                        print(f"  ✓ Summary: {summary_text[:100]}...")
-                    else:
-                        print(f"  ✓ Summary generated")
-                print(f"  ✓ User goals: {behavior_summary.get('user_goals', [])}")
-                print(f"  ✓ User patterns: {behavior_summary.get('user_patterns', [])}")
+                if isinstance(behavior_summary, dict):
+                    summaries = behavior_summary.get("summaries", [])
+                    if summaries:
+                        for i, summary_text in enumerate(summaries[:2], 1):
+                            print(f"  ✓ Summary {i}: {summary_text[:80]}...")
+                        if len(summaries) > 2:
+                            print(f"  ✓ ... and {len(summaries) - 2} more summaries")
 
     except Exception as e:
         print(f"  ❌ Error during behavior summarization: {str(e)}")
