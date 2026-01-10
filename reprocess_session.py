@@ -240,6 +240,9 @@ def process_session(session_id: str = "20260111_054812_a216"):
             )
         }
 
+        # Add session_id for VLMAnalyzer to locate screenshots
+        llm_data["session_id"] = session_id
+
         print(f"  ✓ Data quality score: {llm_data['data_quality']['coverage_percentage']:.1f}%")
 
     else:
