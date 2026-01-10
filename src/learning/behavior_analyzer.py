@@ -245,7 +245,11 @@ class DataCollector:
 
     def collect_uiautomator(self, duration_seconds: int = 60):
         """收集uiautomator事件数据"""
-        filename = os.path.join(self.output_dir, f"uiautomator_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+        # 新格式使用简单的 uiautomator.log，旧格式保留时间戳
+        if self.session_id:
+            filename = os.path.join(self.output_dir, "uiautomator.log")
+        else:
+            filename = os.path.join(self.output_dir, f"uiautomator_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
         with open(filename, 'w', encoding='utf-8') as f:
             # Windows下使用PowerShell命令
             cmd = ['adb', 'shell', 'uiautomator', 'events']
@@ -270,7 +274,11 @@ class DataCollector:
     
     def collect_window(self, duration_seconds: int = 60, interval_seconds: int = 2):
         """收集window状态数据"""
-        filename = os.path.join(self.output_dir, f"window_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+        # 新格式使用简单的 window.log，旧格式保留时间戳
+        if self.session_id:
+            filename = os.path.join(self.output_dir, "window.log")
+        else:
+            filename = os.path.join(self.output_dir, f"window_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
         with open(filename, 'w', encoding='utf-8') as f:
             start_time = time.time()
             while not self.stop_event.is_set() and (time.time() - start_time) < duration_seconds:
@@ -695,7 +703,13 @@ class DataProcessor:
         current_session = None
 
         for event in events:
-            event_time = datetime.fromisoformat(event["timestamp"].replace('Z', '+00:00'))
+            # 规范化时间戳格式：统一转换为 ISO + 'Z' 格式
+            timestamp_str = event["timestamp"]
+            # 移除多余的时区信息（如 +00:00Z 或 +00:00+00:00）
+            timestamp_str = timestamp_str.replace('+00:00', '')
+            timestamp_str = timestamp_str.rstrip('Z') + 'Z'  # 确保以单个Z结尾
+
+            event_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
 
             # 检查是否需要新会话
             if (current_session is None or
@@ -1941,7 +1955,12 @@ class BehaviorAnalyzer:
 
                         time_offset = hours * 3600 + minutes * 60 + seconds + millis / 1000.0
                         screenshot_time = session_start_time + timedelta(seconds=time_offset)
-                        timestamp_iso = screenshot_time.isoformat() + "Z"
+                        # 确保时间戳格式一致：如果原始时间戳以Z结尾，则使用Z；如果以+00:00结尾，则转换为Z
+                        timestamp_iso = screenshot_time.isoformat()
+                        if timestamp_iso.endswith('+00:00'):
+                            timestamp_iso = timestamp_iso[:-6] + 'Z'
+                        elif not timestamp_iso.endswith('Z'):
+                            timestamp_iso = timestamp_iso + 'Z'
                     else:
                         # 降级到旧格式或跳过
                         continue
