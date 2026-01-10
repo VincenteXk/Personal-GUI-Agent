@@ -883,20 +883,30 @@ class DataProcessor:
         return merged
 
     def build_app_sessions(self, events):
-        """构建应用会话，优化交互事件处理"""
+        """构建应用会话，优化交互事件处理
+
+        核心修复：改进事件处理逻辑，使其对事件顺序更加鲁棒。
+        当ui_event到达时，如果还没有activity，创建默认activity来接收交互。
+        """
         app_sessions = []
         current_app = None
         current_activities = []
+        current_app_package = None
+        current_activity_name = None
+        last_focus_time = None
 
         for event in events:
-            if event["event_type"] == "current_focus":
+            event_type = event.get("event_type")
+
+            if event_type == "current_focus":
                 app_package = event.get("app_package", "")
                 activity = event.get("activity", "")
+                timestamp = event.get("timestamp", "")
 
                 # 如果应用包名不为空
                 if app_package:
                     # 如果是新应用，保存当前应用会话
-                    if current_app is None or current_app["app_package"] != app_package:
+                    if current_app_package != app_package:
                         # 保存当前应用会话
                         if current_app is not None:
                             # 计算最后一个活动的持续时间
@@ -916,95 +926,98 @@ class DataProcessor:
                             "activities": []
                         }
                         current_activities = []
+                        current_app_package = app_package
 
                     # 检查是否是新活动
-                    if not current_activities or current_activities[-1]["name"] != activity:
+                    if current_activity_name != activity:
                         # 计算上一个活动的持续时间
                         if current_activities:
                             prev_activity = current_activities[-1]
-                            if "duration" not in prev_activity:
-                                prev_activity["duration"] = 0
+                            if "duration" not in prev_activity and last_focus_time:
+                                try:
+                                    prev_dt = datetime.fromisoformat(prev_activity["start_time"].replace('Z', '+00:00'))
+                                    focus_dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                                    prev_activity["duration"] = (focus_dt - prev_dt).total_seconds()
+                                except:
+                                    prev_activity["duration"] = 0
 
                         # 添加新活动
                         current_activities.append({
                             "name": activity,
-                            "start_time": event["timestamp"],
+                            "start_time": timestamp,
                             "interactions": []
                         })
+                        current_activity_name = activity
 
-            elif event["event_type"] == "ui_event":
-                # 添加交互事件到当前活动
+                    last_focus_time = timestamp
+
+            elif event_type == "ui_event" or event_type == "screenshot":
+                # 确保有活动来接收交互事件
+                # 如果没有current_activities，创建一个默认activity
+                if not current_activities and current_app_package:
+                    current_activities.append({
+                        "name": "默认活动",
+                        "start_time": event.get("timestamp", ""),
+                        "interactions": []
+                    })
+                    current_activity_name = "默认活动"
+
                 if current_activities:
                     current_activity = current_activities[-1]
 
                     # 计算时间偏移量
                     activity_start_time = current_activity["start_time"]
                     try:
-                        # 将时间戳字符串转换为datetime对象
-                        event_dt = datetime.fromisoformat(event["timestamp"].replace('Z', '+00:00'))
+                        event_dt = datetime.fromisoformat(event.get("timestamp", "").replace('Z', '+00:00'))
                         activity_dt = datetime.fromisoformat(activity_start_time.replace('Z', '+00:00'))
                         time_offset = (event_dt - activity_dt).total_seconds()
                     except:
                         time_offset = 0
 
-                    # P0 优化：过滤content_change噪音事件
-                    if self._should_filter_content_change(event):
-                        continue
+                    if event_type == "ui_event":
+                        # P0 优化：过滤content_change噪音事件
+                        if self._should_filter_content_change(event):
+                            continue
 
-                    # 创建交互事件
-                    interaction = {
-                        "action": event["action"],
-                        "target": event.get("target", ""),
-                        "time_offset": time_offset
-                    }
+                        # 创建交互事件
+                        interaction = {
+                            "action": event["action"],
+                            "target": event.get("target", ""),
+                            "time_offset": time_offset
+                        }
 
-                    # 如果有内容，添加内容字段
-                    if "content" in event:
-                        interaction["content"] = event["content"]
+                        # 如果有内容，添加内容字段
+                        if "content" in event:
+                            interaction["content"] = event["content"]
 
-                    # P0 优化：过滤重复的window_change事件
-                    last_interaction = current_activity["interactions"][-1] if current_activity["interactions"] else None
-                    if self._should_filter_window_change(event, last_interaction):
-                        # 更新最后一个window_change事件的时间偏移
-                        if last_interaction and last_interaction.get("action") == "window_change":
-                            last_interaction["time_offset"] = time_offset
-                        continue
+                        # P0 优化：过滤重复的window_change事件
+                        last_interaction = current_activity["interactions"][-1] if current_activity["interactions"] else None
+                        if self._should_filter_window_change(event, last_interaction):
+                            # 更新最后一个window_change事件的时间偏移
+                            if last_interaction and last_interaction.get("action") == "window_change":
+                                last_interaction["time_offset"] = time_offset
+                            continue
 
-                    # 合并连续的相同window_change事件（保留兼容性）
-                    if (event["action"] == "window_change" and
-                        current_activity["interactions"] and
-                        current_activity["interactions"][-1]["action"] == "window_change" and
-                        current_activity["interactions"][-1]["target"] == event.get("target", "")):
-                        # 更新最后一个window_change事件的时间偏移
-                        current_activity["interactions"][-1]["time_offset"] = time_offset
-                    else:
-                        # 添加新交互事件
+                        # 合并连续的相同window_change事件（保留兼容性）
+                        if (event["action"] == "window_change" and
+                            current_activity["interactions"] and
+                            current_activity["interactions"][-1]["action"] == "window_change" and
+                            current_activity["interactions"][-1]["target"] == event.get("target", "")):
+                            # 更新最后一个window_change事件的时间偏移
+                            current_activity["interactions"][-1]["time_offset"] = time_offset
+                        else:
+                            # 添加新交互事件
+                            current_activity["interactions"].append(interaction)
+
+                    elif event_type == "screenshot":
+                        # 创建截图交互事件
+                        interaction = {
+                            "action": "screenshot",
+                            "filepath": event.get("filepath", ""),
+                            "time_offset": time_offset
+                        }
                         current_activity["interactions"].append(interaction)
-            
-            elif event["event_type"] == "screenshot":
-                # 添加截图事件到当前活动
-                if current_activities:
-                    current_activity = current_activities[-1]
-                    
-                    # 计算时间偏移量
-                    activity_start_time = current_activity["start_time"]
-                    try:
-                        # 将时间戳字符串转换为datetime对象
-                        event_dt = datetime.fromisoformat(event["timestamp"].replace('Z', '+00:00'))
-                        activity_dt = datetime.fromisoformat(activity_start_time.replace('Z', '+00:00'))
-                        time_offset = (event_dt - activity_dt).total_seconds()
-                    except:
-                        time_offset = 0
-                    
-                    # 创建截图交互事件
-                    interaction = {
-                        "action": "screenshot",
-                        "filepath": event.get("filepath", ""),
-                        "time_offset": time_offset
-                    }
-                    
-                    current_activity["interactions"].append(interaction)
-        
+
         # 添加最后一个应用会话
         if current_app is not None:
             # 计算最后一个活动的持续时间
@@ -1084,15 +1097,19 @@ class DataProcessor:
         return "，".join(summary_parts) + "。" if summary_parts else ""
     
     def prepare_for_llm(self, session):
-        """为LLM准备结构化数据，包含详细的交互信息"""
+        """为LLM准备结构化数据，包含详细的交互信息
+
+        修复：从raw_events中提取所有截图，不仅仅依赖于interactions中的screenshot
+        """
         if not session:
             return None
-            
+
         # 提取基本会话信息
         context_window = session.get("context_window", {})
         app_sessions = session.get("app_sessions", [])
         search_content = session.get("search_content", [])
-        
+        all_events = session.get("events", [])
+
         # 构建LLM友好的数据结构
         llm_data = {
             "session_info": {
@@ -1104,43 +1121,43 @@ class DataProcessor:
             "screenshots": [],  # 单独的截图列表
             "search_content": search_content  # 添加搜索内容
         }
-        
+
         # 处理每个应用的会话
         for app_session in app_sessions:
             app_name = app_session.get("app_name", "未知应用")
             activities = app_session.get("activities", [])
-            
+
             app_data = {
                 "app_name": app_name,
                 "activities": []
             }
-            
+
             # 处理每个活动
             for activity in activities:
                 activity_name = activity.get("name", "未知活动")
                 start_time = activity.get("start_time")
                 duration = activity.get("duration", 0)
                 interactions = activity.get("interactions", [])
-                
+
                 activity_data = {
                     "activity_name": activity_name,
                     "start_time": start_time,
                     "duration_seconds": duration,
                     "interactions": []
                 }
-                
+
                 # 处理每个交互，保留原始数据
                 for interaction in interactions:
                     # 过滤掉无意义的content_change事件（target为空）
                     if interaction.get("action") == "content_change" and not interaction.get("target"):
                         continue
-                    
+
                     interaction_data = {
                         "action": interaction.get("action"),
                         "target": interaction.get("target"),
                         "time_offset": interaction.get("time_offset", 0)
                     }
-                    
+
                     # 处理截图事件
                     if interaction.get("action") == "screenshot":
                         # 添加到截图列表
@@ -1153,32 +1170,41 @@ class DataProcessor:
                                 screenshot_timestamp = dt.isoformat() + "Z"
                             except:
                                 pass
-                        
+
                         llm_data["screenshots"].append({
                             "timestamp": screenshot_timestamp,
                             "filepath": interaction.get("filepath", "")
                         })
-                        
+
                         # 在interactions中也保留截图信息
                         interaction_data["filepath"] = interaction.get("filepath", "")
-                    
+
                     # 添加内容字段（如果有）
                     if "content" in interaction:
                         interaction_data["content"] = interaction["content"]
-                    
+
                     activity_data["interactions"].append(interaction_data)
-                
+
                 app_data["activities"].append(activity_data)
-            
+
             llm_data["user_activities"].append(app_data)
-        
+
+        # 从raw_events中提取截图（作为备选方案，确保没有遗漏）
+        if not llm_data["screenshots"] and all_events:
+            for event in all_events:
+                if event.get("event_type") == "screenshot":
+                    llm_data["screenshots"].append({
+                        "timestamp": event.get("timestamp", ""),
+                        "filepath": event.get("filepath", "")
+                    })
+
         # 按时间戳排序截图
         llm_data["screenshots"].sort(key=lambda x: x.get("timestamp", ""))
-        
+
         # 添加原始事件数据（可选，用于更详细的分析）
         if "events" in session:
             llm_data["raw_events"] = session["events"]
-        
+
         return llm_data
     
     def build_context_window(self, session, window_size_minutes=None):

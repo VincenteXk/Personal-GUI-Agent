@@ -166,16 +166,56 @@ class VLMAnalyzer:
     def analyze_session_with_screenshots(self, session_data: Dict[str, Any], prompt_template: str = None) -> Dict[str, Any]:
         """
         分析会话数据中的截图和文本，推理用户行为链
-        
+
         Args:
             session_data: 会话数据，包含截图和交互信息
             prompt_template: 自定义提示模板，如果为None则使用默认模板
-            
+
         Returns:
             包含行为链分析结果的字典
         """
         if not session_data or "screenshots" not in session_data:
             return {"error": "会话数据或截图信息缺失"}
+
+        # ===== P0 修复：添加数据质量验证 =====
+        # 检查user_activities数据
+        user_activities = session_data.get("user_activities", [])
+        has_meaningful_activities = False
+        total_interactions = 0
+
+        for app in user_activities:
+            activities = app.get("activities", [])
+            if activities:
+                has_meaningful_activities = True
+                for activity in activities:
+                    interactions = activity.get("interactions", [])
+                    total_interactions += len(interactions)
+
+        # 检查截图数据
+        screenshots = session_data.get("screenshots", [])
+        has_screenshots = len(screenshots) > 0
+
+        # 如果数据为空或非常稀疏，返回警告而非虚假分析
+        if not has_meaningful_activities and not has_screenshots:
+            return {
+                "error": "数据质量过低：没有有意义的用户活动和截图信息",
+                "warning": "无法进行可靠的行为分析，请检查数据采集和处理过程",
+                "data_summary": {
+                    "app_count": len(user_activities),
+                    "activities_count": sum(len(app.get("activities", [])) for app in user_activities),
+                    "interactions_count": total_interactions,
+                    "screenshots_count": len(screenshots)
+                }
+            }
+
+        # 记录数据质量信息（用于调试）
+        print(f"数据质量检查：")
+        print(f"  应用数量: {len(user_activities)}")
+        print(f"  活动数量: {sum(len(app.get('activities', [])) for app in user_activities)}")
+        print(f"  交互数量: {total_interactions}")
+        print(f"  截图数量: {len(screenshots)}")
+        print(f"  是否有意义的活动: {has_meaningful_activities}")
+        print(f"  是否有截图: {has_screenshots}")
         
         # 准备提示词
         if prompt_template is None:
