@@ -186,12 +186,12 @@ class PersonalUI:
                 time.sleep(1)
         else:
             # 前台学习模式
-            sessions = self.behavior_analyzer.collect_and_process(duration_seconds=duration)
-            
-            if sessions and self.vlm_analyzer:
-                # 生成和分析LLM数据
+            session_id = self.behavior_analyzer.collect_and_process(duration_seconds=duration)
+
+            if session_id and self.vlm_analyzer:
+                # 生成和分析LLM数据（传递会话ID）
                 print("🔍 分析用户行为数据...")
-                result = self.vlm_analyzer.analyze_and_save_latest_session(self.behavior_analyzer)
+                result = self.vlm_analyzer.analyze_and_save_latest_session(self.behavior_analyzer, session_id=session_id)
 
                 if result and "error" not in result:
                     print(f"✅ 分析完成: {result.get('session_id')}")

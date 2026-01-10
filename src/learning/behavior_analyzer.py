@@ -2053,7 +2053,7 @@ class BehaviorAnalyzer:
         update_master_index(self.output_dir, session_id, metadata)
 
         print(f"处理完成，结果已保存到 {session_folder}")
-        return processed_sessions
+        return session_id  # 返回会话ID而不是processed_sessions
     
     def get_latest_session_for_llm(self):
         """获取最新的会话数据并转换为适合LLM处理的格式"""

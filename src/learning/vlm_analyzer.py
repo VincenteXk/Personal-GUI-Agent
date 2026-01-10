@@ -391,12 +391,13 @@ class VLMAnalyzer:
 
         return results
 
-    def analyze_and_save_latest_session(self, behavior_analyzer) -> Dict[str, Any]:
+    def analyze_and_save_latest_session(self, behavior_analyzer, session_id=None) -> Dict[str, Any]:
         """
-        获取最新会话的LLM数据、进行VLM分析并保存结果
+        获取指定会话的LLM数据、进行VLM分析并保存结果
 
         Args:
             behavior_analyzer: BehaviorAnalyzer 实例
+            session_id: 会话ID。如果为None，则使用最新会话
 
         Returns:
             {
@@ -407,18 +408,57 @@ class VLMAnalyzer:
             }
         """
         try:
-            # 1. 获取最新会话的LLM数据
-            llm_data = behavior_analyzer.get_latest_session_for_llm()
-            if not llm_data:
-                return {"error": "无法生成LLM数据"}
+            # 获取会话的LLM数据
+            if session_id:
+                # 直接加载指定会话的数据
+                from src.learning.utils import load_session_metadata
 
-            session_id = llm_data.get("session_id")
+                output_dir = behavior_analyzer.output_dir
+                session_folder = os.path.join(output_dir, "sessions", session_id)
+                processed_dir = os.path.join(session_folder, "processed")
+
+                # 加载数据
+                metadata = load_session_metadata(output_dir, session_id)
+                summary_file = os.path.join(processed_dir, "session_summary.json")
+
+                with open(summary_file, 'r', encoding='utf-8') as f:
+                    summary = json.load(f)
+
+                # 构建LLM数据
+                llm_data = {
+                    'session_id': session_id,
+                    'metadata': metadata,
+                    'sessions': summary.get('sessions', []),
+                }
+
+                # 添加截图
+                screenshot_dir = os.path.join(session_folder, 'screenshots')
+                if os.path.exists(screenshot_dir):
+                    screenshot_files = sorted([
+                        os.path.join(screenshot_dir, f)
+                        for f in os.listdir(screenshot_dir)
+                        if f.endswith('.png')
+                    ])
+                    llm_data['screenshots'] = [
+                        {'filepath': f, 'filename': os.path.basename(f)}
+                        for f in screenshot_files
+                    ]
+            else:
+                # 获取最新会话
+                llm_data = behavior_analyzer.get_latest_session_for_llm()
+                if not llm_data:
+                    return {"error": "无法生成LLM数据"}
+                session_id = llm_data.get("session_id")
+
+            if not session_id:
+                return {"error": "无法确定会话ID"}
+
             output_dir = behavior_analyzer.output_dir
             session_folder = os.path.join(output_dir, "sessions", session_id)
             processed_dir = os.path.join(session_folder, "processed")
             analysis_dir = os.path.join(session_folder, "analysis")
 
-            # 2. 分析截图（如果有）
+            # 分析截图（如果有）
             analysis_result = {
                 "session_id": session_id,
                 "timestamp": datetime.now().isoformat() + "Z",
@@ -442,13 +482,13 @@ class VLMAnalyzer:
             else:
                 analysis_result["status"] = "no_screenshots"
 
-            # 3. 保存LLM数据
+            # 保存LLM数据
             os.makedirs(processed_dir, exist_ok=True)
             llm_file = os.path.join(processed_dir, f"{session_id}_llm.json")
             with open(llm_file, 'w', encoding='utf-8') as f:
                 json.dump(llm_data, f, indent=2, ensure_ascii=False)
 
-            # 4. 保存分析结果
+            # 保存分析结果
             os.makedirs(analysis_dir, exist_ok=True)
             analysis_file = os.path.join(analysis_dir, f"{session_id}_vlm_analysis.json")
             with open(analysis_file, 'w', encoding='utf-8') as f:
