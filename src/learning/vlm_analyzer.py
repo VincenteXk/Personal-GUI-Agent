@@ -7,6 +7,7 @@ import re
 import base64
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from string import Template
 import requests
 from PIL import Image
 import io
@@ -32,6 +33,41 @@ class VLMAnalyzer:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
+
+    def _safe_format_template(self, template: str, **kwargs) -> str:
+        """
+        安全的模板格式化方法，支持两种语法：
+        1. 旧格式：{user_activities} 和 {screenshots_info}（使用.format()）
+        2. 新格式：$user_activities 和 $screenshots_info（使用string.Template）
+
+        这样可以避免字面JSON中的 {...} 被误解为格式占位符。
+
+        Args:
+            template: 包含占位符的模板字符串
+            **kwargs: 格式化参数
+
+        Returns:
+            格式化后的字符串
+        """
+        # 先尝试新格式（使用$variables）
+        if "$user_activities" in template or "$screenshots_info" in template:
+            try:
+                return Template(template).safe_substitute(**kwargs)
+            except Exception:
+                pass
+
+        # 后退到旧格式（使用{variables}）
+        # 但我们需要更安全的方法来避免JSON字面量冲突
+        # 使用正则表达式只替换明确的占位符
+        result = template
+        for key, value in kwargs.items():
+            # 只替换 {key} 这样的占位符，不要贪心匹配
+            result = re.sub(
+                r'\{' + re.escape(key) + r'\}',
+                str(value).replace('\\', '\\\\'),  # 转义反斜杠
+                result
+            )
+        return result
 
     def encode_image_to_base64(self, image_path: str, base_dir: str = None) -> str:
         """
@@ -220,7 +256,7 @@ class VLMAnalyzer:
         # 准备提示词
         if prompt_template is None:
             prompt_template = """
-请分析以下用户行为数据，包括截图和交互信息，推理出用户的行为链。
+请仔细分析以下用户行为数据和截图，推理用户的行为过程。
 
 用户活动信息：
 {user_activities}
@@ -228,22 +264,30 @@ class VLMAnalyzer:
 截图信息：
 {screenshots_info}
 
-请分析并回答：
-1. 用户在使用什么应用？
-2. 用户的主要行为是什么？
-3. 如果是购物/外卖/支付类应用，请详细说明：
-   - 何时进行的操作
-   - 在什么平台/商家
-   - 选择了什么商品/服务
-   - 支付了多少金额（如果可见）
-4. 用户的行为意图可能是什么？
+请基于截图内容和交互日志，详细分析用户行为。特别注意：
+- 聊天类应用：提取聊天对象名称、群名、发送的具体消息内容
+- 购物类应用：提取商品名称、价格、下单金额
+- 浏览类应用：提取访问内容和操作流程
 
-请以JSON格式返回你的分析结果，包含以下字段：
-- app_name: 应用名称
-- main_action: 主要行为
-- detailed_actions: 详细行为列表
-- intent: 用户意图
-- confidence: 分析的置信度（0-1）
+请严格按照以下JSON格式返回结果（确保输出是有效JSON）：
+
+{
+  "app_name": "应用名称",
+  "main_action": "主要行为总结",
+  "detailed_actions": [
+    {
+      "time": "时间戳",
+      "action": "具体行为描述，包含所有可见的文本和细节（如有的话）"
+    }
+  ],
+  "chat_details": "如是聊天应用，描述：和谁聊天（名称/群名）、发了什么消息、使用的输入法等。如非聊天应用，写null",
+  "shopping_details": "如是购物应用，描述：浏览/购买了什么商品（名称、价格）、下单金额、支付方式等。如非购物应用，写null",
+  "intent": "用户的最终目的和意图",
+  "confidence": 0.9,
+  "key_observations": "其他关键发现和观察（如输入内容、涉及的联系人/商家等）"
+}
+
+重要：必须返回有效的JSON，chat_details和shopping_details如果不适用请直接写null。
 """
         
         # 格式化用户活动信息
@@ -253,16 +297,16 @@ class VLMAnalyzer:
                 app_name = app.get("app_name", "未知应用")
                 activities = app.get("activities", [])
                 user_activities_text += f"应用: {app_name}\n"
-                
+
                 for activity in activities:
                     activity_name = activity.get("activity_name", "未知活动")
                     start_time = activity.get("start_time", "未知时间")
                     interactions = activity.get("interactions", [])
-                    
+
                     user_activities_text += f"  活动: {activity_name}\n"
                     user_activities_text += f"  开始时间: {start_time}\n"
                     user_activities_text += f"  交互次数: {len(interactions)}\n"
-        
+
         # 格式化截图信息
         screenshots_text = ""
         screenshots = session_data.get("screenshots", [])
@@ -271,9 +315,13 @@ class VLMAnalyzer:
             filepath = screenshot.get("filepath", "")
             screenshots_text += f"截图 {i+1}: {timestamp}\n"
             screenshots_text += f"  文件路径: {filepath}\n"
-        
-        # 填充提示模板
-        prompt = prompt_template.format(
+
+        # 填充提示模板 - 使用安全的格式化方法
+        # 处理两种情况：
+        # 1. 新格式（含字面JSON）：使用 string.Template，需要 $user_activities 和 $screenshots_info
+        # 2. 旧格式（简单占位符）：使用 .format()
+        prompt = self._safe_format_template(
+            prompt_template,
             user_activities=user_activities_text,
             screenshots_info=screenshots_text
         )
