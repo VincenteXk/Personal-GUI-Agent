@@ -49,24 +49,38 @@ class UserObserver:
                 model=getattr(self.model_config, 'model', 'glm-4.1v-thinking-flash'),
                 api_url=getattr(self.model_config, 'api_url', None)
             )
-        
+
         # 初始化GraphRAG
         # config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'graphrag', 'config.yaml')
         # if os.path.exists(config_path):
         #     self.graphrag = SimpleGraph(config_path=config_path)
-        
-        # 初始化数据收集器
-        self.data_collector = DataCollector()
+
+        # 延迟初始化数据收集器直到启动学习循环时
+        # 这样可以避免创建不必要的顶级 data/raw 和 data/screenshots 目录
+
     
     def start_learning_loop(self, duration: Optional[int] = None):
         """启动学习循环"""
         if self.is_learning:
             print("学习模式已在运行中")
             return
-        
+
         self.is_learning = True
         print("🎓 启动用户行为学习模式...")
-        
+
+        # 创建 session-specific 的数据收集器
+        # 这样所有数据都会保存在 data/sessions/<session_id>/ 目录下
+        from src.learning.utils import get_timestamp_str
+        session_id = f"{get_timestamp_str()}_{os.urandom(2).hex()}"
+        session_folder = os.path.join("data", "sessions", session_id)
+        os.makedirs(os.path.join(session_folder, "raw"), exist_ok=True)
+        os.makedirs(os.path.join(session_folder, "screenshots"), exist_ok=True)
+
+        self.data_collector = DataCollector(
+            os.path.join(session_folder, "raw"),
+            session_id=session_id
+        )
+
         if duration:
             # 有时限的学习模式
             self._start_timed_learning(duration)
