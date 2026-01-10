@@ -220,3 +220,6 @@ __marimo__/
 .claude/
 >>>>>>> cbe6761f776b4cbcb23659dc69724ff8af1b56b9
 uv.lock
+
+# Configuration files with sensitive data
+config.json
