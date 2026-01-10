@@ -1,0 +1,17 @@
+{
+  "session_id": "20260110_000916_8eb6",
+  "start_time": "2026-01-10T00:09:16.536000Z",
+  "end_time": "2026-01-10T00:10:17.741000+00:00+00:00Z",
+  "status": "completed",
+  "data_sources": {
+    "logcat": "raw/logcat.log",
+    "uiautomator": "raw/uiautomator.log",
+    "window": "raw/window.log"
+  },
+  "statistics": {
+    "total_events": 524,
+    "screenshot_count": 1,
+    "app_sessions": 6
+  },
+  "tags": []
+}

@@ -1,0 +1,37 @@
+{
+  "version": "2.0",
+  "last_updated": "2026-01-11T04:39:27.868572Z",
+  "total_sessions": 2,
+  "index_entries": [
+    {
+      "session_id": "20260110_000916_8eb6",
+      "start_time": "2026-01-10T00:09:16.536000Z",
+      "end_time": "2026-01-10T00:10:17.741000+00:00+00:00Z",
+      "duration_seconds": null,
+      "folder_path": "sessions/20260110_000916_8eb6",
+      "status": "completed",
+      "statistics": {
+        "total_events": 524,
+        "screenshot_count": 1,
+        "app_sessions": 6
+      },
+      "tags": [],
+      "has_analysis": false
+    },
+    {
+      "session_id": "20260110_004929_b4f3",
+      "start_time": "2026-01-10T00:49:29.661000Z",
+      "end_time": "2026-01-10T00:50:30.660000+00:00+00:00Z",
+      "duration_seconds": null,
+      "folder_path": "sessions/20260110_004929_b4f3",
+      "status": "completed",
+      "statistics": {
+        "total_events": 444,
+        "screenshot_count": 2,
+        "app_sessions": 4
+      },
+      "tags": [],
+      "has_analysis": true
+    }
+  ]
+}
