@@ -152,7 +152,8 @@ class PersonalUI:
         if learn_conf["api_key"]:
             self.vlm_analyzer = VLMAnalyzer(
                 api_key=learn_conf["api_key"],
-                model=learn_conf["model"]
+                model=learn_conf["model"],
+                api_url=learn_conf.get("api_url")
             )
             print("✅ VLM Analyzer 已配置")
         else:

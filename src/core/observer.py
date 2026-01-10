@@ -46,7 +46,8 @@ class UserObserver:
         if self.model_config and hasattr(self.model_config, 'api_key') and self.model_config.api_key:
             self.vlm_analyzer = VLMAnalyzer(
                 api_key=self.model_config.api_key,
-                model=getattr(self.model_config, 'model', 'glm-4.1v-thinking-flash')
+                model=getattr(self.model_config, 'model', 'glm-4.1v-thinking-flash'),
+                api_url=getattr(self.model_config, 'api_url', None)
             )
         
         # 初始化GraphRAG

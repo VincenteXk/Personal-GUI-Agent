@@ -3,15 +3,9 @@ import re
 import subprocess
 import time
 import os
-import cv2
-import numpy as np
-from datetime import datetime
-from PIL import Image, ImageDraw, ImageFont
+from datetime import datetime, timedelta
 import threading
-from queue import Queue
-import logging
 from typing import Dict, List, Tuple, Optional, Any
-import queue
 import shutil
 
 from src.shared.config import APP_PACKAGE_MAPPINGS
@@ -23,9 +17,16 @@ learning_thread = None
 
 class ScreenshotCollector:
     """截图收集器，负责在特定事件触发时捕获屏幕截图"""
-    
-    def __init__(self, output_dir: str = "data/screenshots"):
+
+    def __init__(self, output_dir: str = "data/screenshots", session_id: str = None):
+        """
+        Args:
+            output_dir: 输出目录，可以是 'data/screenshots' (旧格式) 或 'data/sessions/<session_id>/screenshots' (新格式)
+            session_id: 会话ID，如果提供则使用新的会话结构
+        """
         self.output_dir = output_dir
+        self.session_id = session_id
+        self.session_start_time = None  # 用于计算相对时间
         self.ensure_output_dir()
         self.stop_event = threading.Event()
         self.screenshot_thread = None
@@ -38,45 +39,78 @@ class ScreenshotCollector:
         """确保输出目录存在"""
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
-    
+
     def take_screenshot(self, trigger_type="event", timestamp=None):
         """捕获屏幕截图
-        
+
         Args:
             trigger_type: 触发类型，"event"表示事件触发，"timer"表示定时触发
             timestamp: 时间戳，如果为None则使用当前时间
-            
+
         Returns:
-            截图文件路径
+            截图文件路径（相对于output_dir的相对路径或绝对路径）
         """
         if timestamp is None:
             timestamp = datetime.now()
-        
+
+        # 初始化会话开始时间（用于计算相对时间）
+        if self.session_start_time is None and isinstance(timestamp, datetime):
+            self.session_start_time = timestamp
+
         # 检查最小截图间隔
         current_time = time.time()
         if current_time - self.last_screenshot_time < self.min_screenshot_interval:
             return None  # 跳过截图，防止过于频繁
-        
+
         # 生成截图文件名
-        filename = os.path.join(self.output_dir, f"screenshot_{timestamp.strftime('%Y%m%d_%H%M%S_%f')[:-3]}.png")
-        
+        if self.session_id:
+            # 新格式：使用相对时间 HHmmSS_mmm.png
+            if isinstance(timestamp, datetime):
+                time_offset = (timestamp - self.session_start_time).total_seconds()
+                offset_hours = int(time_offset // 3600)
+                offset_minutes = int((time_offset % 3600) // 60)
+                offset_seconds = int(time_offset % 60)
+                offset_millis = int((time_offset % 1) * 1000)
+                filename = f"{offset_hours:02d}{offset_minutes:02d}{offset_seconds:02d}_{offset_millis:03d}.png"
+            else:
+                # 如果是字符串时间戳，转换并计算
+                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                if self.session_start_time is None:
+                    self.session_start_time = dt
+                time_offset = (dt - self.session_start_time).total_seconds()
+                offset_hours = int(time_offset // 3600)
+                offset_minutes = int((time_offset % 3600) // 60)
+                offset_seconds = int(time_offset % 60)
+                offset_millis = int((time_offset % 1) * 1000)
+                filename = f"{offset_hours:02d}{offset_minutes:02d}{offset_seconds:02d}_{offset_millis:03d}.png"
+            full_path = os.path.join(self.output_dir, filename)
+        else:
+            # 旧格式：使用绝对时间戳 YYYYMMDD_HHMMSS_mmm.png
+            if isinstance(timestamp, str):
+                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            else:
+                dt = timestamp
+            filename = f"screenshot_{dt.strftime('%Y%m%d_%H%M%S_%f')[:-3]}.png"
+            full_path = os.path.join(self.output_dir, filename)
+
         try:
             # 使用adb pull方式截图，避免Windows系统下PNG文件头损坏问题
             # 首先在设备上截图
             device_screenshot_path = "/sdcard/screenshot_temp.png"
             cmd_capture = ['adb', 'shell', 'screencap', '-p', device_screenshot_path]
             subprocess.run(cmd_capture, capture_output=True, check=True)
-            
+
             # 然后从设备拉取截图到本地
-            cmd_pull = ['adb', 'pull', device_screenshot_path, filename]
+            cmd_pull = ['adb', 'pull', device_screenshot_path, full_path]
             subprocess.run(cmd_pull, capture_output=True, check=True)
-            
+
             # 删除设备上的临时截图文件
             cmd_remove = ['adb', 'shell', 'rm', device_screenshot_path]
             subprocess.run(cmd_remove, capture_output=True, check=True)
-            
+
             self.last_screenshot_time = current_time
-            return filename
+            # 返回相对于output_dir的相对文件名（用于新格式）或绝对路径（用于旧格式）
+            return filename if self.session_id else full_path
         except subprocess.CalledProcessError as e:
             print(f"截图失败: {e}")
             return None
@@ -134,13 +168,22 @@ class ScreenshotCollector:
 
 class DataCollector:
     """数据收集器，负责从三个adb命令收集原始数据"""
-    
-    def __init__(self, output_dir: str = "data/raw"):
+
+    def __init__(self, output_dir: str = "data/raw", session_id: str = None):
+        """
+        Args:
+            output_dir: 输出目录，可以是 'data/raw' (旧格式) 或 'data/sessions/<session_id>/raw' (新格式)
+            session_id: 会话ID，用于标识会话特定的输出
+        """
         self.output_dir = output_dir
+        self.session_id = session_id
         self.ensure_output_dir()
         self.stop_event = threading.Event()
         self.threads = []
-        self.screenshot_collector = ScreenshotCollector()  # 添加截图收集器
+        self.screenshot_collector = ScreenshotCollector(
+            os.path.join(os.path.dirname(output_dir), "screenshots") if session_id else "data/screenshots",
+            session_id=session_id
+        )  # 添加截图收集器
         
     def ensure_output_dir(self):
         """确保输出目录存在"""
@@ -149,12 +192,17 @@ class DataCollector:
     
     def collect_logcat(self, duration_seconds: int = 60):
         """收集logcat数据"""
-        filename = os.path.join(self.output_dir, f"logcat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+        # 新格式使用简单的 logcat.log，旧格式保留时间戳
+        if self.session_id:
+            filename = os.path.join(self.output_dir, "logcat.log")
+        else:
+            filename = os.path.join(self.output_dir, f"logcat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+
         with open(filename, 'w', encoding='utf-8') as f:
             # Windows下使用PowerShell命令
             cmd = ['adb', 'shell', 'logcat', '-v', 'time']
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace')
-            
+
             start_time = time.time()
             while not self.stop_event.is_set() and (time.time() - start_time) < duration_seconds:
                 line = process.stdout.readline()
@@ -162,7 +210,7 @@ class DataCollector:
                     f.write(line)
                 else:
                     time.sleep(0.1)
-            
+
             process.terminate()
             return filename
     
@@ -468,25 +516,40 @@ class DataParser:
                     
                     # 解析坐标
                     coordinates = None
-                    coord_match = re.search(r'bounds=\[(\d+,\d+)\]\[(\d+,\d+)\]', line)
+                    coord_match = re.search(r'bounds=\[(\d+),(\d+)\]\[(\d+),(\d+)\]', line)
                     if coord_match:
+                        x1, y1, x2, y2 = int(coord_match.group(1)), int(coord_match.group(2)), int(coord_match.group(3)), int(coord_match.group(4))
+                        center_x = int((x1 + x2) / 2)
+                        center_y = int((y1 + y2) / 2)
                         coordinates = {
-                            "top_left": coord_match.group(1),
-                            "bottom_right": coord_match.group(2)
+                            "center": {"x": center_x, "y": center_y},
+                            "bounds": {"top_left": [x1, y1], "bottom_right": [x2, y2]}
                         }
                     
-                    # 创建目标描述
-                    target_parts = []
+                    # 创建目标描述（P1优化：改进优先级）
+                    # 优先级：1. text 2. resource_id 3. content_desc 4. class_name
+                    target_description = "未知元素"
+
                     if text:
-                        target_parts.append(f"text={text}")
-                    if resource_id:
-                        target_parts.append(f"id={resource_id}")
-                    if class_name:
-                        target_parts.append(f"class={class_name}")
-                    if content_desc:
-                        target_parts.append(f"desc={content_desc}")
-                    
-                    target = ", ".join(target_parts) if target_parts else "未知元素"
+                        # 优先使用text
+                        target_description = text
+                        if resource_id:
+                            # 简化resource_id，只保留最后部分
+                            simplified_id = resource_id.split("/")[-1] if "/" in resource_id else resource_id
+                            target_description = f"{text} ({simplified_id})"
+                    elif resource_id:
+                        # 其次使用resource_id
+                        simplified_id = resource_id.split("/")[-1] if "/" in resource_id else resource_id
+                        target_description = simplified_id
+                    elif content_desc:
+                        # 然后使用content_desc
+                        target_description = content_desc
+                    elif class_name:
+                        # 最后使用class_name
+                        simplified_class = class_name.split(".")[-1] if "." in class_name else class_name
+                        target_description = simplified_class
+
+                    target = target_description
                     
                     # 构建事件对象
                     event = {
@@ -623,24 +686,29 @@ class DataProcessor:
                 last_current_focus = None  # 重置，因为中间有其他事件
         
         return merged_events
-    
+
     def segment_into_sessions(self, events, session_timeout_seconds=300):
         """将事件分割为会话"""
+        from src.learning.utils import generate_session_id
+
         sessions = []
         current_session = None
-        
+
         for event in events:
             event_time = datetime.fromisoformat(event["timestamp"].replace('Z', '+00:00'))
-            
+
             # 检查是否需要新会话
-            if (current_session is None or 
+            if (current_session is None or
                 (event_time - current_session["last_event_time"]).total_seconds() > session_timeout_seconds):
-                
+
                 if current_session:
                     sessions.append(current_session)
-                
+
+                # 使用新的session_id格式：YYYYMMDD_HHMMSS_<short-id>
+                session_id = generate_session_id(event["timestamp"])
+
                 current_session = {
-                    "session_id": f"session_{event['timestamp'].replace(':', '-')}",
+                    "session_id": session_id,
                     "start_time": event["timestamp"],
                     "last_event_time": event_time,
                     "events": [event]
@@ -648,23 +716,169 @@ class DataProcessor:
             else:
                 current_session["events"].append(event)
                 current_session["last_event_time"] = event_time
-        
+
         if current_session:
             sessions.append(current_session)
-        
+
         return sessions
     
+    def _should_filter_content_change(self, event: Dict[str, Any]) -> bool:
+        """判断content_change事件是否应该被过滤
+
+        过滤规则：
+        1. target为空或仅含通用class名（FrameLayout、ProgressBar等）的content_change
+        2. 保留含text/desc的content_change（可能是有意义的内容更新）
+
+        Args:
+            event: UIAutomator事件
+
+        Returns:
+            True表示应该过滤，False表示应该保留
+        """
+        if event.get("action") != "content_change":
+            return False
+
+        target = event.get("target", "")
+
+        # 过滤掉空target
+        if not target:
+            return True
+
+        # 过滤掉只有class信息的target（通用UI框架类）
+        generic_classes = [
+            "android.widget.FrameLayout",
+            "android.widget.ProgressBar",
+            "android.widget.LinearLayout",
+            "android.view.View",
+            "androidx.appcompat.widget.ActionBarOverlayLayout"
+        ]
+
+        has_text_or_desc = "text=" in target or ("desc=" in target and "desc=null;" not in target)
+        if not has_text_or_desc:
+            # 检查是否只含有通用class
+            for generic_class in generic_classes:
+                if generic_class in target and not any(attr in target for attr in ["text=", "id="] if attr != "text="):
+                    return True
+
+        return False
+
+    def _should_filter_window_change(self, event: Dict[str, Any], last_interaction: Optional[Dict[str, Any]]) -> bool:
+        """判断window_change事件是否应该被过滤
+
+        过滤规则：
+        1. 连续window_change事件的target相同且间隔<1秒时，过滤后续事件
+
+        Args:
+            event: 当前window_change事件
+            last_interaction: 上一个交互事件
+
+        Returns:
+            True表示应该过滤，False表示应该保留
+        """
+        if event.get("action") != "window_change":
+            return False
+
+        if last_interaction is None or last_interaction.get("action") != "window_change":
+            return False
+
+        # 检查target是否相同
+        if last_interaction.get("target") != event.get("target"):
+            return False
+
+        # 检查时间间隔（目标小于1秒）
+        current_offset = event.get("time_offset", 0)
+        last_offset = last_interaction.get("time_offset", 0)
+        time_diff = current_offset - last_offset
+
+        return 0 < time_diff < 1.0
+
+    def _merge_consecutive_text_inputs(self, interactions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """合并连续的text_input事件为输入序列
+
+        策略：
+        1. 识别连续的text_input事件（同一target，时间间隔<2秒）
+        2. 合并为单个interaction，保留完整的input_sequence
+        3. 主要content为final_text
+
+        Args:
+            interactions: 原始交互列表
+
+        Returns:
+            合并后的交互列表
+        """
+        if not interactions:
+            return interactions
+
+        merged = []
+        i = 0
+
+        while i < len(interactions):
+            interaction = interactions[i]
+
+            # 如果不是text_input，直接添加
+            if interaction.get("action") != "text_input":
+                merged.append(interaction)
+                i += 1
+                continue
+
+            # 开始收集连续的text_input事件
+            text_input_sequence = [interaction]
+            target = interaction.get("target", "")
+            start_offset = interaction.get("time_offset", 0)
+
+            j = i + 1
+            while j < len(interactions):
+                next_interaction = interactions[j]
+
+                # 检查是否是同一目标的text_input且时间间隔<2秒
+                if (next_interaction.get("action") == "text_input" and
+                    next_interaction.get("target") == target and
+                    next_interaction.get("time_offset", 0) - start_offset < 2.0):
+                    text_input_sequence.append(next_interaction)
+                    j += 1
+                else:
+                    break
+
+            # 如果收集到多个text_input，进行合并
+            if len(text_input_sequence) > 1:
+                # 提取所有的content值
+                input_sequence = [x.get("content", "") for x in text_input_sequence if x.get("content")]
+                final_text = text_input_sequence[-1].get("content", "")
+
+                merged_interaction = {
+                    "action": "text_input",
+                    "target": target,
+                    "final_text": final_text,
+                    "time_offset": text_input_sequence[-1].get("time_offset", 0)
+                }
+
+                # 仅当输入序列长度>1时才保留sequence
+                if len(input_sequence) > 1:
+                    merged_interaction["input_sequence"] = input_sequence
+                else:
+                    # 否则使用content字段（兼容旧格式）
+                    merged_interaction["content"] = final_text
+
+                merged.append(merged_interaction)
+                i = j
+            else:
+                # 单个text_input，保持原样
+                merged.append(interaction)
+                i += 1
+
+        return merged
+
     def build_app_sessions(self, events):
         """构建应用会话，优化交互事件处理"""
         app_sessions = []
         current_app = None
         current_activities = []
-        
+
         for event in events:
             if event["event_type"] == "current_focus":
                 app_package = event.get("app_package", "")
                 activity = event.get("activity", "")
-                
+
                 # 如果应用包名不为空
                 if app_package:
                     # 如果是新应用，保存当前应用会话
@@ -676,10 +890,10 @@ class DataProcessor:
                                 last_activity = current_activities[-1]
                                 if "duration" not in last_activity:
                                     last_activity["duration"] = 0
-                            
+
                             current_app["activities"] = current_activities
                             app_sessions.append(current_app)
-                        
+
                         # 创建新应用会话
                         app_name = self.app_name_mapping.get(app_package, app_package)
                         current_app = {
@@ -688,7 +902,7 @@ class DataProcessor:
                             "activities": []
                         }
                         current_activities = []
-                    
+
                     # 检查是否是新活动
                     if not current_activities or current_activities[-1]["name"] != activity:
                         # 计算上一个活动的持续时间
@@ -696,19 +910,19 @@ class DataProcessor:
                             prev_activity = current_activities[-1]
                             if "duration" not in prev_activity:
                                 prev_activity["duration"] = 0
-                        
+
                         # 添加新活动
                         current_activities.append({
                             "name": activity,
                             "start_time": event["timestamp"],
                             "interactions": []
                         })
-            
+
             elif event["event_type"] == "ui_event":
                 # 添加交互事件到当前活动
                 if current_activities:
                     current_activity = current_activities[-1]
-                    
+
                     # 计算时间偏移量
                     activity_start_time = current_activity["start_time"]
                     try:
@@ -718,21 +932,33 @@ class DataProcessor:
                         time_offset = (event_dt - activity_dt).total_seconds()
                     except:
                         time_offset = 0
-                    
+
+                    # P0 优化：过滤content_change噪音事件
+                    if self._should_filter_content_change(event):
+                        continue
+
                     # 创建交互事件
                     interaction = {
                         "action": event["action"],
                         "target": event.get("target", ""),
                         "time_offset": time_offset
                     }
-                    
+
                     # 如果有内容，添加内容字段
                     if "content" in event:
                         interaction["content"] = event["content"]
-                    
-                    # 合并连续的相同window_change事件
-                    if (event["action"] == "window_change" and 
-                        current_activity["interactions"] and 
+
+                    # P0 优化：过滤重复的window_change事件
+                    last_interaction = current_activity["interactions"][-1] if current_activity["interactions"] else None
+                    if self._should_filter_window_change(event, last_interaction):
+                        # 更新最后一个window_change事件的时间偏移
+                        if last_interaction and last_interaction.get("action") == "window_change":
+                            last_interaction["time_offset"] = time_offset
+                        continue
+
+                    # 合并连续的相同window_change事件（保留兼容性）
+                    if (event["action"] == "window_change" and
+                        current_activity["interactions"] and
                         current_activity["interactions"][-1]["action"] == "window_change" and
                         current_activity["interactions"][-1]["target"] == event.get("target", "")):
                         # 更新最后一个window_change事件的时间偏移
@@ -772,10 +998,16 @@ class DataProcessor:
                 last_activity = current_activities[-1]
                 if "duration" not in last_activity:
                     last_activity["duration"] = 0
-            
+
             current_app["activities"] = current_activities
             app_sessions.append(current_app)
-        
+
+        # P0 优化：合并所有应用会话中的连续text_input事件
+        for app_session in app_sessions:
+            for activity in app_session.get("activities", []):
+                if "interactions" in activity:
+                    activity["interactions"] = self._merge_consecutive_text_inputs(activity["interactions"])
+
         return app_sessions
     
     def get_ui_element_description(self, target):
@@ -810,25 +1042,32 @@ class DataProcessor:
     
     def generate_summary_text(self, app_sessions):
         """生成简化的自然语言摘要，保留更多结构化数据供LLM分析"""
-        # 简化摘要生成，只保留基本结构
+        # P1 优化：包含时长信息
         summary_parts = []
-        
+
         for app_session in app_sessions:
             app_name = app_session["app_name"]
             activities = app_session["activities"]
-            
+
             if not activities:
                 continue
-                
-            # 只记录应用打开
-            summary_parts.append(f"打开{app_name}")
-            
+
+            # 计算总时长
+            total_duration = sum(activity.get("duration", 0) for activity in activities)
+
+            # 记录应用打开和停留时长
+            if total_duration > 0:
+                duration_text = f"({int(total_duration)}秒)"
+                summary_parts.append(f"打开{app_name}{duration_text}")
+            else:
+                summary_parts.append(f"打开{app_name}")
+
             # 统计交互次数，不详细描述
-            total_interactions = sum(len(activity["interactions"]) for activity in activities)
+            total_interactions = sum(len(activity.get("interactions", [])) for activity in activities)
             if total_interactions > 0:
                 summary_parts.append(f"进行了{total_interactions}次交互")
-        
-        return "，".join(summary_parts) + "。"
+
+        return "，".join(summary_parts) + "。" if summary_parts else ""
     
     def prepare_for_llm(self, session):
         """为LLM准备结构化数据，包含详细的交互信息"""
@@ -976,10 +1215,15 @@ class DataProcessor:
             
             # 构建应用会话
             app_sessions = self.build_app_sessions(window_events)
-            
+
+            # P1 优化：修复所有activities的duration字段
+            for app_session in app_sessions:
+                if "activities" in app_session:
+                    app_session["activities"] = self.fix_activity_durations(app_session["activities"])
+
             # 生成摘要文本
             summary_text = self.generate_summary_text(app_sessions)
-            
+
             # 提取搜索内容
             search_content = self.extract_search_content(window_events)
             
@@ -1341,15 +1585,24 @@ class BehaviorAnalyzer:
     def __init__(self, output_dir: str = "data"):
         self.output_dir = output_dir
         self.sessions_dir = os.path.join(output_dir, "sessions")
+        # 旧结构支持（向后兼容）
         self.processed_dir = os.path.join(output_dir, "processed")
+        # 新结构：全局索引路径
+        self.master_index_path = os.path.join(output_dir, "master_index.json")
         self.ensure_output_dirs()
-        self.collector = DataCollector(os.path.join(output_dir, "raw"))
+        # 注：collector和parser在collect_and_process中按需初始化，使用session-specific路径
         self.parser = DataParser()
         self.processor = DataProcessor()
-    
+
     def ensure_output_dirs(self):
         """确保输出目录存在"""
-        for subdir in ["raw", "sessions", "processed"]:
+        # 创建主要目录结构
+        for subdir in ["sessions"]:
+            dir_path = os.path.join(self.output_dir, subdir)
+            if not os.path.exists(dir_path):
+                os.makedirs(dir_path)
+        # 为了向后兼容，也创建旧结构的目录
+        for subdir in ["raw", "processed"]:
             dir_path = os.path.join(self.output_dir, subdir)
             if not os.path.exists(dir_path):
                 os.makedirs(dir_path)
@@ -1605,106 +1858,182 @@ class BehaviorAnalyzer:
         return sessions
 
     def collect_and_process(self, duration_seconds: int = 60):
-        """收集并处理数据"""
+        """收集并处理数据，使用新的会话文件结构"""
+        from src.learning.utils import (
+            generate_session_id, create_session_folder,
+            create_session_metadata, update_master_index
+        )
+
         print(f"开始收集数据，将持续 {duration_seconds} 秒...")
-        
+
+        # 生成会话ID
+        session_id = generate_session_id()
+        print(f"会话ID: {session_id}")
+
+        # 创建会话文件夹结构
+        session_folder = create_session_folder(self.output_dir, session_id)
+        print(f"会话文件夹: {session_folder}")
+
+        # 初始化收集器（使用session-specific路径）
+        collector = DataCollector(
+            os.path.join(session_folder, "raw"),
+            session_id=session_id
+        )
+
         # 启动数据收集
-        threads = self.collector.start_collection(duration_seconds)
-        
+        threads = collector.start_collection(duration_seconds)
+
         # 等待收集完成
         for thread in threads:
             thread.join()
-        
+
         print("数据收集完成，开始处理...")
-        
-        # 获取最新的数据文件
-        raw_dir = os.path.join(self.output_dir, "raw")
-        logcat_files = [f for f in os.listdir(raw_dir) if f.startswith("logcat_")]
-        uiautomator_files = [f for f in os.listdir(raw_dir) if f.startswith("uiautomator_")]
-        window_files = [f for f in os.listdir(raw_dir) if f.startswith("window_")]
-        
-        if not logcat_files or not uiautomator_files or not window_files:
+
+        # 获取会话的数据文件
+        raw_dir = os.path.join(session_folder, "raw")
+        logcat_file = os.path.join(raw_dir, "logcat.log")
+        uiautomator_file = os.path.join(raw_dir, "uiautomator.log")
+        window_file = os.path.join(raw_dir, "window.log")
+
+        # 检查必要的文件
+        if not all(os.path.exists(f) for f in [logcat_file, uiautomator_file, window_file]):
             print("错误：缺少必要的数据文件")
             return None
-        
-        # 获取最新文件
-        logcat_file = os.path.join(raw_dir, sorted(logcat_files)[-1])
-        uiautomator_file = os.path.join(raw_dir, sorted(uiautomator_files)[-1])
-        window_file = os.path.join(raw_dir, sorted(window_files)[-1])
-        
+
         # 获取截图文件
-        screenshot_dir = self.collector.screenshot_collector.output_dir
+        screenshot_dir = os.path.join(session_folder, "screenshots")
         screenshot_files = []
         if os.path.exists(screenshot_dir):
-            screenshot_files = [os.path.join(screenshot_dir, f) for f in os.listdir(screenshot_dir) if f.startswith("screenshot_")]
-        
+            screenshot_files = [
+                os.path.join(screenshot_dir, f)
+                for f in os.listdir(screenshot_dir)
+                if f.endswith(".png")
+            ]
+
         # 解析数据
         logcat_events = self.parser.parse_logcat_data(logcat_file)
         uiautomator_events = self.parser.parse_uiautomator_data(uiautomator_file)
         window_events = self.parser.parse_window_data(window_file)
-        
-        # 解析截图事件
+
+        # 解析截图事件（支持新格式的相对时间命名）
         screenshot_events = []
-        for screenshot_file in screenshot_files:
-            # 从文件名提取时间戳
-            filename = os.path.basename(screenshot_file)
-            timestamp_match = re.search(r'screenshot_(\d{8}_\d{6}_\d{3})\.png', filename)
-            if timestamp_match:
-                timestamp_str = timestamp_match.group(1)
+        if screenshot_files:
+            # 获取会话开始时间
+            session_start_time = None
+            if logcat_events:
                 try:
-                    timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S_%f")
-                    timestamp_iso = timestamp.isoformat() + "Z"
+                    session_start_time = datetime.fromisoformat(
+                        logcat_events[0]["timestamp"].replace('Z', '+00:00')
+                    )
+                except (ValueError, TypeError, IndexError):
+                    pass
+
+            for screenshot_file in screenshot_files:
+                filename = os.path.basename(screenshot_file)
+                try:
+                    # 尝试新格式：HHmmSS_mmm.png
+                    timestamp_match = re.search(r'^(\d{2})(\d{2})(\d{2})_(\d{3})\.png$', filename)
+                    if timestamp_match and session_start_time:
+                        hours = int(timestamp_match.group(1))
+                        minutes = int(timestamp_match.group(2))
+                        seconds = int(timestamp_match.group(3))
+                        millis = int(timestamp_match.group(4))
+
+                        time_offset = hours * 3600 + minutes * 60 + seconds + millis / 1000.0
+                        screenshot_time = session_start_time + timedelta(seconds=time_offset)
+                        timestamp_iso = screenshot_time.isoformat() + "Z"
+                    else:
+                        # 降级到旧格式或跳过
+                        continue
+
                     screenshot_events.append({
                         "timestamp": timestamp_iso,
                         "source": "screenshot",
                         "event_type": "screenshot",
                         "filepath": screenshot_file
                     })
-                except ValueError:
+                except (ValueError, TypeError, AttributeError):
                     continue
-        
+
         print(f"解析完成：logcat事件 {len(logcat_events)} 个，uiautomator事件 {len(uiautomator_events)} 个，window事件 {len(window_events)} 个，截图 {len(screenshot_events)} 个")
-        
+
         # 合并和排序事件
         all_events = self.processor.merge_and_sort_events(logcat_events, uiautomator_events, window_events, screenshot_events)
-        
+
         # 分割会话
         sessions = self.processor.segment_into_sessions(all_events)
         print(f"识别出 {len(sessions)} 个会话")
-        
+
+        # 获取会话时间范围
+        if sessions:
+            session_start_time = sessions[0]["start_time"]
+            # 获取最后一个会话的结束时间
+            session_end_time = sessions[-1]["events"][-1]["timestamp"] if sessions[-1]["events"] else session_start_time
+        else:
+            session_start_time = datetime.now().isoformat() + "Z"
+            session_end_time = session_start_time
+
         # 处理每个会话
         processed_sessions = []
         all_search_content = []  # 收集所有会话的搜索内容
-        
+
         for session in sessions:
             context_window = self.processor.build_context_window(session)
             if context_window:
                 # 添加原始事件数据
                 context_window["events"] = session["events"]
                 processed_sessions.append(context_window)
-                
+
                 # 收集搜索内容
                 if "search_content" in context_window:
                     all_search_content.extend(context_window["search_content"])
-                
-                # 保存会话数据
-                session_file = os.path.join(self.output_dir, "sessions", f"{session['session_id']}.json")
-                with open(session_file, 'w', encoding='utf-8') as f:
-                    json.dump(context_window, f, indent=2, ensure_ascii=False)
-        
-        # 保存所有搜索内容
-        if all_search_content:
-            self.save_search_content(all_search_content)
-        
-        # 保存索引文件
-        index_file = os.path.join(self.output_dir, "index.json")
-        with open(index_file, 'w', encoding='utf-8') as f:
-            json.dump({
-                "total_sessions": len(processed_sessions),
-                "sessions": [{"session_id": s["context_window"]["start_time"], "file": f"sessions/{s['context_window']['start_time']}.json"} for s in processed_sessions]
-            }, f, indent=2, ensure_ascii=False)
-        
-        print(f"处理完成，结果已保存到 {self.output_dir}")
+
+        # 创建会话元数据
+        metadata = create_session_metadata(
+            session_id=session_id,
+            start_time=session_start_time,
+            end_time=session_end_time,
+            status="completed",
+            statistics={
+                "total_events": len(all_events),
+                "screenshot_count": len(screenshot_events),
+                "app_sessions": len(processed_sessions)
+            }
+        )
+
+        # 保存metadata.json
+        metadata_file = os.path.join(session_folder, "metadata.json")
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+        # 保存处理后的events.json
+        events_file = os.path.join(session_folder, "processed", "events.json")
+        events_data = {
+            "session_id": session_id,
+            "events": all_events
+        }
+        with open(events_file, 'w', encoding='utf-8') as f:
+            json.dump(events_data, f, indent=2, ensure_ascii=False)
+
+        # 保存会话摘要（LLM就绪格式）
+        summary_file = os.path.join(session_folder, "processed", "session_summary.json")
+        if processed_sessions:
+            summary_data = self.processor.prepare_for_llm({
+                "context_window": {
+                    "start_time": session_start_time,
+                    "end_time": session_end_time
+                },
+                "app_sessions": [s for s in processed_sessions],
+                "events": all_events,
+                "search_content": all_search_content
+            })
+            with open(summary_file, 'w', encoding='utf-8') as f:
+                json.dump(summary_data, f, indent=2, ensure_ascii=False)
+
+        # 更新全局索引
+        update_master_index(self.output_dir, session_id, metadata)
+
+        print(f"处理完成，结果已保存到 {session_folder}")
         return processed_sessions
     
     def get_latest_session_for_llm(self):
@@ -1815,37 +2144,13 @@ if __name__ == "__main__":
             sys.exit(1)
         
         # 创建VLM分析器
-        analyzer = VLMAnalyzer(api_key=api_key, model=model)
+        analyzer = VLMAnalyzer(api_key=api_key, model=model, api_url=config.get("api_url"))
         
         # 分析最新会话
         sessions_dir = "data/processed"
         if not os.path.exists(sessions_dir):
             print(f"错误: 目录 {sessions_dir} 不存在")
             sys.exit(1)
-        
-        print("开始使用VLM分析最新会话...")
-        result = analyzer.analyze_latest_session(sessions_dir)
-        
-        if "error" in result:
-            print(f"分析失败: {result['error']}")
-        else:
-            print(f"分析成功，结果已保存到: {result['output_file']}")
-            
-            # 打印分析结果
-            if "analysis" in result and "analysis" in result["analysis"]:
-                analysis = result["analysis"]["analysis"]
-                if "app_name" in analysis:
-                    print(f"应用名称: {analysis['app_name']}")
-                if "main_action" in analysis:
-                    print(f"主要行为: {analysis['main_action']}")
-                if "detailed_actions" in analysis:
-                    print("详细行为:")
-                    for action in analysis["detailed_actions"]:
-                        print(f"  - {action}")
-                if "intent" in analysis:
-                    print(f"用户意图: {analysis['intent']}")
-                if "confidence" in analysis:
-                    print(f"分析置信度: {analysis['confidence']}")
     else:
         # 默认行为：使用已有会话数据进行测试
         analyzer = BehaviorAnalyzer()
