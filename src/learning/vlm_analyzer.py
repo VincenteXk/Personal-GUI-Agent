@@ -313,8 +313,8 @@ class VLMAnalyzer:
             session_id = session_data["session_id"]
             session_base_dir = os.path.join("data", "sessions", session_id)
 
-        # 添加截图（最多添加前5张，避免token过多）
-        for i, screenshot in enumerate(screenshots[:5]):
+        # 添加截图（均匀添加前5张，避免token过多）
+        for i, screenshot in enumerate(screenshots[::len(screenshots)//5]):
             filepath = screenshot.get("filepath", "")
             # 标准化路径，处理Windows路径分隔符
             if filepath:
