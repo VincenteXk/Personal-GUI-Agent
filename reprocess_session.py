@@ -76,26 +76,68 @@ def process_session(session_id: str = "20260111_054812_a216"):
     print(f"  ✓ Window events: {len(window_events)}")
 
     # Parse screenshots (from screenshots directory)
+    # First pass: collect screenshot timestamps from already-parsed events
+    # This is needed later when we filter by timestamp range
     screenshots_dir = os.path.join(base_path, "screenshots")
     screenshot_events = []
+
     if os.path.exists(screenshots_dir):
+        # We'll add screenshot events later after combining all events
+        print(f"  ✓ Screenshots directory found: {screenshots_dir}")
+    else:
+        print(f"  - Screenshots directory not found: {screenshots_dir}")
+
+    # Combine logcat, uiautomator, and window events
+    # Screenshot events will be added next with proper timestamps
+    combined_events = logcat_events + uiautomator_events + window_events
+
+    # Sort by timestamp
+    combined_events.sort(key=lambda x: x.get("timestamp", ""))
+
+    # Now add screenshot events with proper timestamps
+    if os.path.exists(screenshots_dir):
+        # Build a map of screenshot paths to timestamps from already-parsed events
+        # Some screenshot events may have already been parsed from logs
+        screenshot_timestamp_map = {}
+        for event in combined_events:
+            if event.get("event_type") == "screenshot":
+                filepath = event.get("filepath", "")
+                timestamp = event.get("timestamp", "")
+                if filepath and timestamp:
+                    # Normalize path for comparison
+                    screenshot_timestamp_map[filepath] = timestamp
+
+        # Process actual screenshot files
         for filename in sorted(os.listdir(screenshots_dir)):
             if filename.endswith('.png'):
-                filepath = os.path.join(screenshots_dir, filename)
-                # Get file modification time
-                mtime = os.path.getmtime(filepath)
-                event_time = datetime.fromtimestamp(mtime).isoformat() + "Z"
+                rel_path = os.path.join("screenshots", filename)
 
-                screenshot_events.append({
-                    "timestamp": event_time,
-                    "event_type": "screenshot",
-                    "source": "screenshot",
-                    "filepath": os.path.join("screenshots", filename)
-                })
+                # Try to find timestamp from map first
+                timestamp = screenshot_timestamp_map.get(rel_path)
+
+                if not timestamp:
+                    # Fallback to file modification time
+                    filepath = os.path.join(screenshots_dir, filename)
+                    try:
+                        mtime = os.path.getmtime(filepath)
+                        timestamp = datetime.fromtimestamp(mtime).isoformat() + "Z"
+                    except:
+                        # Final fallback: use current time
+                        timestamp = datetime.now().isoformat() + "Z"
+
+                # Only add if not already in combined_events
+                if rel_path not in screenshot_timestamp_map:
+                    screenshot_events.append({
+                        "timestamp": timestamp,
+                        "event_type": "screenshot",
+                        "source": "screenshot",
+                        "filepath": rel_path
+                    })
+
         print(f"  ✓ Screenshot events: {len(screenshot_events)}")
 
     # Combine all events
-    all_events = logcat_events + uiautomator_events + window_events + screenshot_events
+    all_events = combined_events + screenshot_events
 
     # Sort by timestamp
     all_events.sort(key=lambda x: x.get("timestamp", ""))
@@ -165,11 +207,11 @@ def process_session(session_id: str = "20260111_054812_a216"):
     # =========================================================================
     print("\n[STEP 4] Building context window...")
 
-    context_window = processor.build_context_window(events_data)
+    context_result = processor.build_context_window(events_data)
 
-    print(f"  ✓ Start time: {context_window.get('start_time')}")
-    print(f"  ✓ End time: {context_window.get('end_time')}")
-    print(f"  ✓ Duration: {context_window.get('duration_minutes', 0):.1f} minutes")
+    print(f"  ✓ Start time: {context_result.get('context_window', {}).get('start_time')}")
+    print(f"  ✓ End time: {context_result.get('context_window', {}).get('end_time')}")
+    print(f"  ✓ Duration: {context_result.get('context_window', {}).get('duration_minutes', 0):.1f} minutes")
 
     # =========================================================================
     # STEP 5: Extract search content
@@ -191,13 +233,12 @@ def process_session(session_id: str = "20260111_054812_a216"):
     # =========================================================================
     print("\n[STEP 6] Saving session_summary.json...")
 
-    session_summary_data = {
-        "session_id": session_id,
-        "context_window": context_window,
-        "app_sessions": app_sessions,
-        "events": all_events,
-        "search_content": search_content
-    }
+    # FIX: build_context_window() returns a dict with context_window, app_sessions, etc.
+    # We should use that directly, not nest it again
+    # Just add the events and create the final session_summary_data
+    session_summary_data = context_result.copy()
+    session_summary_data["session_id"] = session_id
+    session_summary_data["events"] = all_events  # Add raw events for prepare_for_llm
 
     summary_file = os.path.join(processed_dir, "session_summary.json")
     with open(summary_file, "w", encoding="utf-8") as f:
@@ -207,6 +248,16 @@ def process_session(session_id: str = "20260111_054812_a216"):
     print(f"    - Apps: {len(app_sessions)}")
     print(f"    - Activities: {total_activities}")
     print(f"    - Interactions: {total_interactions}")
+
+    # Validation: Check structure
+    print(f"\n  Validating session_summary structure:")
+    print(f"    ✓ Has 'context_window' dict: {'context_window' in session_summary_data and isinstance(session_summary_data.get('context_window'), dict)}")
+    print(f"    ✓ Has 'app_sessions' list: {'app_sessions' in session_summary_data and isinstance(session_summary_data.get('app_sessions'), list)}")
+    print(f"    ✓ Has 'events' list: {'events' in session_summary_data and isinstance(session_summary_data.get('events'), list)}")
+    if 'context_window' in session_summary_data:
+        cw = session_summary_data['context_window']
+        print(f"    ✓ context_window has 'start_time': {'start_time' in cw}")
+        print(f"    ✓ context_window has 'duration_minutes': {'duration_minutes' in cw}")
 
     # =========================================================================
     # STEP 7: Prepare for LLM (add data quality metrics)
