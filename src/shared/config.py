@@ -96,7 +96,8 @@ APP_PACKAGE_MAPPINGS = {
     "com.huawei.android.launcher": "桌面",
     "com.sec.android.app.launcher": "桌面",
     "com.miui.home": "桌面",
-    "com.oppo.launcher": "桌面"
+    "com.oppo.launcher": "桌面",
+    "com.obric.browser": "浏览器"
 }
 
 # 反向映射：从应用名称到包名
