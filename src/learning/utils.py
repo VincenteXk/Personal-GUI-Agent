@@ -6,7 +6,6 @@
 
 import os
 import json
-import time
 import shutil
 import asyncio
 import secrets
@@ -216,134 +215,16 @@ def run_async(coro):
     return loop.run_until_complete(coro)
 
 
-def extract_json_from_llm_response(raw_response: str) -> dict:
-    """
-    从LLM/VLM响应中提取JSON，健壮处理多种格式和错误
-
-    策略:
-    1. 直接JSON解析
-    2. 提取markdown代码块 (```json ... ```)
-    3. 括号匹配查找首个{...}对象
-    4. 修复常见JSON错误（未闭合引号、单引号等）
-    5. 字段补全（确保必要字段存在）
-
-    Args:
-        raw_response: LLM的原始响应文本
-
-    Returns:
-        提取的JSON对象
-
-    Raises:
-        ValueError: 无法从响应中提取有效的JSON
-    """
-    import re
-    import json
-
-    # 去除首尾空白
-    response = raw_response.strip()
-
-    # 尝试1：直接解析（如果已经是纯JSON）
-    try:
-        return json.loads(response)
-    except json.JSONDecodeError:
-        pass
-
-    # 尝试2：提取markdown代码块中的JSON
-    code_block_patterns = [
-        r'```json\s*\n(.*?)\n```',
-        r'```\s*\n(.*?)\n```',
-    ]
-
-    for pattern in code_block_patterns:
-        match = re.search(pattern, response, re.DOTALL)
-        if match:
-            json_str = match.group(1).strip()
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                continue
-
-    # 尝试3：查找第一个{...}对象
+def extract_json_from_llm_response(response: str) -> dict:
+    """从LLM响应中提取JSON数据"""
     brace_start = response.find('{')
-    if brace_start != -1:
-        brace_count = 0
-        for i in range(brace_start, len(response)):
-            if response[i] == '{':
-                brace_count += 1
-            elif response[i] == '}':
-                brace_count -= 1
-                if brace_count == 0:
-                    json_str = response[brace_start:i+1]
+    brace_end   = response.rfind('}')
+    json_str = response[brace_start:brace_end+1]
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        return json.loads(response[brace_start:]+'"}')
 
-                    # 尝试直接解析
-                    try:
-                        return json.loads(json_str)
-                    except json.JSONDecodeError:
-                        # 尝试修复常见错误
-                        fixed_json = _fix_json_errors(json_str)
-                        try:
-                            return json.loads(fixed_json)
-                        except json.JSONDecodeError:
-                            pass
-
-    raise ValueError("无法从响应中提取有效的JSON")
-
-
-def _fix_json_errors(json_str: str) -> str:
-    """
-    修复常见的JSON格式错误
-
-    处理以下问题:
-    - 单引号替换为双引号
-    - 尾部逗号
-    - 未闭合的字符串
-    - 控制字符转义
-
-    Args:
-        json_str: 不完全有效的JSON字符串
-
-    Returns:
-        修复后的JSON字符串
-    """
-    import re
-
-    # 1. 将单引号中的内容转换为双引号（但要保护已存在的转义序列）
-    # 简单方法：替换不在双引号内的单引号
-    result = []
-    in_double_quote = False
-    escape_next = False
-
-    for i, char in enumerate(json_str):
-        if escape_next:
-            result.append(char)
-            escape_next = False
-            continue
-
-        if char == '\\':
-            result.append(char)
-            escape_next = True
-            continue
-
-        if char == '"':
-            in_double_quote = not in_double_quote
-            result.append(char)
-        elif char == "'" and not in_double_quote:
-            # 在双引号外的单引号替换为双引号
-            result.append('"')
-        else:
-            result.append(char)
-
-    json_str = ''.join(result)
-
-    # 2. 移除尾部逗号（在]或}之前）
-    json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-
-    # 3. 修复没有引号的字段名（如果有明显的模式）
-    # 匹配: fieldname: 这样的模式并添加引号
-    json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
-
-    # 4. 修复特殊字符（如未转义的换行符）
-    json_str = json_str.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
 
     return json_str
 

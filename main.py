@@ -157,7 +157,7 @@ class PersonalUI:
             )
             print("✅ VLM Analyzer 已配置")
         else:
-            print("⚠️ VLM Analyzer 未配置，某些功能可能受限")
+            print("⚠️ VLM Analyzer 未配置，行为学习模式不可用")
 
         # 检查GraphRAG API是否可用
         if self._check_graphrag_api():

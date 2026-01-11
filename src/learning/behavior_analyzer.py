@@ -1981,49 +1981,50 @@ class BehaviorAnalyzer:
         uiautomator_events = self.parser.parse_uiautomator_data(uiautomator_file)
         window_events = self.parser.parse_window_data(window_file)
 
-        # 解析截图事件（支持新格式的相对时间命名）
+        # 解析截图事件（使用三层回退策略，兼容多种命名格式）
         screenshot_events = []
-        if screenshot_files:
-            # 获取会话开始时间
-            session_start_time = None
-            if logcat_events:
-                try:
-                    session_start_time = datetime.fromisoformat(
-                        logcat_events[0]["timestamp"].replace('Z', '+00:00')
-                    )
-                except (ValueError, TypeError, IndexError):
-                    pass
 
+        # 首先合并已解析的事件，构建截图时间戳映射
+        combined_events = logcat_events + uiautomator_events + window_events
+        combined_events.sort(key=lambda x: x.get("timestamp", ""))
+
+        # 从已解析事件中构建截图时间戳映射
+        screenshot_timestamp_map = {}
+        for event in combined_events:
+            if event.get("event_type") == "screenshot":
+                filepath = event.get("filepath", "")
+                timestamp = event.get("timestamp", "")
+                if filepath and timestamp:
+                    screenshot_timestamp_map[filepath] = timestamp
+
+        # 处理截图文件
+        if screenshot_files:
             for screenshot_file in screenshot_files:
                 filename = os.path.basename(screenshot_file)
+                rel_path = os.path.join("screenshots", filename)
+
                 try:
-                    # 尝试新格式：HHmmSS_mmm.png
-                    timestamp_match = re.search(r'^(\d{2})(\d{2})(\d{2})_(\d{3})\.png$', filename)
-                    if timestamp_match and session_start_time:
-                        hours = int(timestamp_match.group(1))
-                        minutes = int(timestamp_match.group(2))
-                        seconds = int(timestamp_match.group(3))
-                        millis = int(timestamp_match.group(4))
+                    # 优先级1：从已解析事件的映射中查找时间戳
+                    timestamp = screenshot_timestamp_map.get(rel_path)
 
-                        time_offset = hours * 3600 + minutes * 60 + seconds + millis / 1000.0
-                        screenshot_time = session_start_time + timedelta(seconds=time_offset)
-                        # 确保时间戳格式一致：如果原始时间戳以Z结尾，则使用Z；如果以+00:00结尾，则转换为Z
-                        timestamp_iso = screenshot_time.isoformat()
-                        if timestamp_iso.endswith('+00:00'):
-                            timestamp_iso = timestamp_iso[:-6] + 'Z'
-                        elif not timestamp_iso.endswith('Z'):
-                            timestamp_iso = timestamp_iso + 'Z'
-                    else:
-                        # 降级到旧格式或跳过
-                        continue
+                    if not timestamp:
+                        # 优先级2：尝试从文件修改时间获取时间戳
+                        try:
+                            mtime = os.path.getmtime(screenshot_file)
+                            timestamp = datetime.fromtimestamp(mtime).isoformat() + "Z"
+                        except:
+                            # 优先级3：最后的回退方案，使用当前时间
+                            timestamp = datetime.now().isoformat() + "Z"
 
-                    screenshot_events.append({
-                        "timestamp": timestamp_iso,
-                        "source": "screenshot",
-                        "event_type": "screenshot",
-                        "filepath": screenshot_file
-                    })
-                except (ValueError, TypeError, AttributeError):
+                    # 只添加不在映射中的截图（去重）
+                    if rel_path not in screenshot_timestamp_map:
+                        screenshot_events.append({
+                            "timestamp": timestamp,
+                            "event_type": "screenshot",
+                            "source": "screenshot",
+                            "filepath": rel_path
+                        })
+                except Exception:
                     continue
 
         print(f"解析完成：logcat事件 {len(logcat_events)} 个，uiautomator事件 {len(uiautomator_events)} 个，window事件 {len(window_events)} 个，截图 {len(screenshot_events)} 个")
