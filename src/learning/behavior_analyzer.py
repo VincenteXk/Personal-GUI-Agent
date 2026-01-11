@@ -406,26 +406,34 @@ class DataParser:
                                 "duration": duration
                             })
                     elif "START u0" in line:
-                        # 示例: START u0 from pid 1234 com.dianping.v1/.NovaMainActivity
-                        # 或者: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10200000 cmp=com.dianping.v1/.NovaMainActivity}
-                        match = re.search(r'START u0.*? cmp=([^/]+)/([^ ]+)', line)
+                        # 示例: START u0 {act=android.intent.action.MAIN ... pkg=com.tencent.mm cmp=com.tencent.mm/.ui.LauncherUI ...}
+                        # 优先尝试从cmp=包名/活动 提取
+                        match = re.search(r'cmp=([^/]+)/([^ }]+)', line)
                         if not match:
-                            # 尝试另一种格式
-                            match = re.search(r'START u0.*? ([^/]+)/([^ ]+)', line)
-                        
+                            # 如果没有cmp=，尝试从pkg=包名和活动名提取
+                            pkg_match = re.search(r'pkg=([^ ]+)', line)
+                            if pkg_match:
+                                app_package = pkg_match.group(1)
+                                # 从cmp或活动信息中提取活动名
+                                activity_match = re.search(r'cmp=([^/]+)/([^ }]+)', line)
+                                if activity_match:
+                                    activity = activity_match.group(2)
+                                else:
+                                    # 如果找不到，使用包名作为活动名
+                                    activity = "Unknown"
+                                match = (app_package, activity)
+
                         if match:
-                            app_package, activity = match.groups()
-                            # 清理应用包名，移除可能包含的Intent信息
-                            app_package = re.sub(r'^[^a-zA-Z]', '', app_package)
-                            app_package = re.sub(r'[^a-zA-Z.]*$', '', app_package)
-                            
-                            events.append({
-                                "timestamp": timestamp_iso,
-                                "source": "logcat",
-                                "event_type": "activity_change",
-                                "app_package": app_package,
-                                "activity": f"{app_package}/{activity}"
-                            })
+                            app_package, activity = match if isinstance(match, tuple) else match.groups()
+                            # 确保app_package只包含有效的包名字符
+                            if re.match(r'^[a-zA-Z][a-zA-Z0-9.]*$', app_package):
+                                events.append({
+                                    "timestamp": timestamp_iso,
+                                    "source": "logcat",
+                                    "event_type": "activity_change",
+                                    "app_package": app_package,
+                                    "activity": f"{app_package}/{activity}"
+                                })
         
         return events
     
@@ -1119,7 +1127,8 @@ class DataProcessor:
             },
             "user_activities": [],
             "screenshots": [],  # 单独的截图列表
-            "search_content": search_content  # 添加搜索内容
+            "search_content": search_content,  # 添加搜索内容
+            "text_inputs": []  # 用户输入的文本内容
         }
 
         # 处理每个应用的会话
@@ -1200,6 +1209,23 @@ class DataProcessor:
 
         # 按时间戳排序截图
         llm_data["screenshots"].sort(key=lambda x: x.get("timestamp", ""))
+
+        # 从raw_events中提取文本输入内容，确保VLM能看到用户输入的文本
+        if all_events:
+            seen_contents = set()  # 去重，避免重复的相同输入
+            for event in all_events:
+                if (event.get("event_type") == "ui_event" and
+                    event.get("action") == "text_input" and
+                    "content" in event and event["content"]):
+
+                    content = event["content"].strip()
+                    if content and content not in seen_contents:
+                        seen_contents.add(content)
+                        llm_data["text_inputs"].append({
+                            "timestamp": event.get("timestamp", ""),
+                            "app_package": event.get("app_package", ""),
+                            "content": content
+                        })
 
         # 添加原始事件数据（可选，用于更详细的分析）
         if "events" in session:

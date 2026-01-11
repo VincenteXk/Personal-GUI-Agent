@@ -261,13 +261,16 @@ class VLMAnalyzer:
 用户活动信息：
 {user_activities}
 
+用户输入的文本内容：
+{text_inputs}
+
 截图信息：
 {screenshots_info}
 
-请基于截图内容和交互日志，详细分析用户行为。特别注意：
-- 聊天类应用：提取聊天对象名称、群名、发送的具体消息内容
-- 购物类应用：提取商品名称、价格、下单金额
-- 浏览类应用：提取访问内容和操作流程
+请基于截图内容、交互日志和用户输入的文本，详细分析用户行为。特别注意：
+- 聊天类应用：提取聊天对象名称、群名、发送的具体消息内容（包括用户输入的文本）
+- 购物类应用：提取商品名称、价格、下单金额、搜索内容
+- 浏览类应用：提取访问内容、搜索内容和操作流程
 
 请严格按照以下JSON格式返回结果（确保输出是有效JSON）：
 
@@ -307,6 +310,18 @@ class VLMAnalyzer:
                     user_activities_text += f"  开始时间: {start_time}\n"
                     user_activities_text += f"  交互次数: {len(interactions)}\n"
 
+        # 格式化用户输入的文本内容
+        text_inputs_text = ""
+        text_inputs = session_data.get("text_inputs", [])
+        if text_inputs:
+            for i, text_input in enumerate(text_inputs):
+                content = text_input.get("content", "")
+                app_package = text_input.get("app_package", "")
+                timestamp = text_input.get("timestamp", "未知时间")
+                text_inputs_text += f"输入 {i+1}: \"{content}\" (应用: {app_package}, 时间: {timestamp})\n"
+        else:
+            text_inputs_text = "无文本输入\n"
+
         # 格式化截图信息
         screenshots_text = ""
         screenshots = session_data.get("screenshots", [])
@@ -323,6 +338,7 @@ class VLMAnalyzer:
         prompt = self._safe_format_template(
             prompt_template,
             user_activities=user_activities_text,
+            text_inputs=text_inputs_text,
             screenshots_info=screenshots_text
         )
 
