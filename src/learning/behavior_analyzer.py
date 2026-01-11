@@ -10,11 +10,6 @@ import shutil
 
 from src.shared.config import APP_PACKAGE_MAPPINGS
 
-# 全局变量用于学习模式
-learning_active = False
-learning_thread = None
-
-
 class ScreenshotCollector:
     """截图收集器，负责在特定事件触发时捕获屏幕截图"""
 
@@ -645,63 +640,6 @@ class DataProcessor:
     def __init__(self):
         # 使用共享配置中的应用名称映射
         self.app_name_mapping = APP_PACKAGE_MAPPINGS
-    
-    def merge_and_sort_events(self, logcat_events, uiautomator_events, window_events, screenshot_events=None):
-        """合并并排序所有事件，增强事件过滤和合并逻辑"""
-        all_events = logcat_events + uiautomator_events + window_events
-        
-        # 添加截图事件
-        if screenshot_events:
-            all_events.extend(screenshot_events)
-        
-        # 按时间戳排序
-        all_events.sort(key=lambda x: x.get("timestamp", 0))
-        
-        # 过滤无效事件
-        filtered_events = []
-        for event in all_events:
-            # 过滤掉没有时间戳的事件
-            if "timestamp" not in event:
-                continue
-                
-            # 过滤掉没有事件类型的事件
-            if "event_type" not in event:
-                continue
-                
-            # 过滤掉无效的current_focus事件
-            if event["event_type"] == "current_focus":
-                if "app_package" not in event or not event["app_package"]:
-                    continue
-            
-            filtered_events.append(event)
-        
-        # 合并连续的相同current_focus事件
-        merged_events = []
-        last_current_focus = None
-        
-        for event in filtered_events:
-            if event["event_type"] == "current_focus":
-                current_app = event.get("app_package", "")
-                current_activity = event.get("activity", "")
-                
-                # 如果与上一个current_focus相同，跳过
-                if last_current_focus:
-                    last_app = last_current_focus.get("app_package", "")
-                    last_activity = last_current_focus.get("activity", "")
-                    
-                    if current_app == last_app and current_activity == last_activity:
-                        # 更新时间戳为最新的事件
-                        last_current_focus["timestamp"] = event["timestamp"]
-                        continue
-                
-                # 这是一个新的current_focus事件
-                merged_events.append(event)
-                last_current_focus = event
-            else:
-                merged_events.append(event)
-                last_current_focus = None  # 重置，因为中间有其他事件
-        
-        return merged_events
 
     def segment_into_sessions(self, events, session_timeout_seconds=300):
         """将事件分割为会话"""
@@ -1105,10 +1043,7 @@ class DataProcessor:
         return "，".join(summary_parts) + "。" if summary_parts else ""
     
     def prepare_for_llm(self, session):
-        """为LLM准备结构化数据，包含详细的交互信息
-
-        修复：从raw_events中提取所有截图，不仅仅依赖于interactions中的screenshot
-        """
+        """为LLM准备结构化数据，优化冗余信息但保留原有截图处理逻辑"""
         if not session:
             return None
 
@@ -1126,9 +1061,9 @@ class DataProcessor:
                 "duration_minutes": context_window.get("duration_minutes")
             },
             "user_activities": [],
-            "screenshots": [],  # 单独的截图列表
-            "search_content": search_content,  # 添加搜索内容
-            "text_inputs": []  # 用户输入的文本内容
+            "screenshots": [],  # 保留原有字段名
+            "search_content": search_content,
+            "text_inputs": []
         }
 
         # 处理每个应用的会话
@@ -1148,71 +1083,133 @@ class DataProcessor:
                 duration = activity.get("duration", 0)
                 interactions = activity.get("interactions", [])
 
-                activity_data = {
-                    "activity_name": activity_name,
-                    "start_time": start_time,
-                    "duration_seconds": duration,
-                    "interactions": []
-                }
-
-                # 处理每个交互，保留原始数据
+                # 过滤有意义的交互
+                filtered_interactions = []
+                last_interaction = None
+                
                 for interaction in interactions:
-                    # 过滤掉无意义的content_change事件（target为空）
-                    if interaction.get("action") == "content_change" and not interaction.get("target"):
+                    action = interaction.get("action")
+                    target = interaction.get("target", "")
+                    
+                    # 过滤规则（与原逻辑兼容但更严格）
+                    # 1. 跳过 target 为 null; 或 ; 的事件（与原逻辑一致）
+                    if action == "content_change" and not target:
                         continue
+                        
+                    # 2. 跳过 target 为 "null;" 或 ";" 的事件
+                    if target in ["null;", ";"]:
+                        continue
+                        
+                    # 3. 跳过频繁的 focus 事件（除非有具体目标）
+                    if action == "focus" and not target.strip():
+                        continue
+                        
+                    # 4. 合并重复的 select 动作
+                    if action == "select" and last_interaction and \
+                    last_interaction.get("action") == "select" and \
+                    last_interaction.get("target") == target:
+                        continue
+                    
+                    # 5. 简化 window_change：合并连续相同的窗口变化
+                    if action == "window_change":
+                        # 跳过 target 为 null; 的窗口变化
+                        if target in ["null;", ""]:
+                            continue
+                        
+                        # 如果上一个交互也是 window_change 且目标相同，跳过
+                        if last_interaction and \
+                        last_interaction.get("action") == "window_change" and \
+                        last_interaction.get("target") == target:
+                            continue
+                        
+                        # 跳过频繁的桌面与最近应用之间的来回切换（除非有明显停留）
+                        if "主屏幕" in target and last_interaction and \
+                        "最近用过的应用" in last_interaction.get("target", ""):
+                            # 检查时间间隔，如果太短则跳过
+                            if (interaction.get("time_offset", 0) - last_interaction.get("time_offset", 0)) < 0.5:
+                                continue
+                        
 
-                    interaction_data = {
-                        "action": interaction.get("action"),
-                        "target": interaction.get("target"),
-                        "time_offset": interaction.get("time_offset", 0)
-                    }
-
-                    # 处理截图事件
-                    if interaction.get("action") == "screenshot":
-                        # 添加到截图列表
+                        
+                    # 简化时间戳（保留2位小数）
+                    if "time_offset" in interaction:
+                        interaction["time_offset"] = round(interaction["time_offset"], 2)
+                    
+                    # 处理截图事件（保留原逻辑）
+                    if action == "screenshot":
+                        filepath = interaction.get("filepath", "")
                         screenshot_timestamp = start_time
-                        if screenshot_timestamp and interaction.get("time_offset"):
+                        
+                        if screenshot_timestamp and "time_offset" in interaction:
                             try:
                                 from datetime import datetime, timedelta
-                                dt = datetime.fromisoformat(screenshot_timestamp.replace('Z', '+00:00'))
+                                # 处理时间戳格式
+                                timestamp_str = screenshot_timestamp.replace('Z', '+00:00')
+                                dt = datetime.fromisoformat(timestamp_str)
                                 dt += timedelta(seconds=interaction.get("time_offset", 0))
-                                screenshot_timestamp = dt.isoformat() + "Z"
-                            except:
+                                screenshot_timestamp = dt.isoformat().replace('+00:00', 'Z')
+                            except Exception:
                                 pass
 
-                        llm_data["screenshots"].append({
-                            "timestamp": screenshot_timestamp,
-                            "filepath": interaction.get("filepath", "")
-                        })
+                        # 添加到截图列表（避免重复）
+                        screenshot_exists = False
+                        for existing in llm_data["screenshots"]:
+                            if existing.get("filepath") == filepath:
+                                screenshot_exists = True
+                                break
+                        
+                        if not screenshot_exists:
+                            llm_data["screenshots"].append({
+                                "timestamp": screenshot_timestamp,
+                                "filepath": filepath,
+                                "app": app_name,
+                                "time_offset": interaction.get("time_offset", 0)
+                            })
 
-                        # 在interactions中也保留截图信息
-                        interaction_data["filepath"] = interaction.get("filepath", "")
+                    filtered_interactions.append(interaction)
+                    last_interaction = interaction
+                
+                # 只有当有意义的交互时才保留该activity
+                if filtered_interactions:
+                    activity_data = {
+                        "activity_name": activity_name,
+                        "start_time": start_time,
+                        "duration_seconds": round(duration, 2),
+                        "interactions": filtered_interactions
+                    }
+                    app_data["activities"].append(activity_data)
 
-                    # 添加内容字段（如果有）
-                    if "content" in interaction:
-                        interaction_data["content"] = interaction["content"]
+            # 只有当有意义的activity时才保留该app
+            if app_data["activities"]:
+                # 添加应用总时长
+                app_data["total_duration"] = sum(
+                    a.get("duration_seconds", 0) for a in app_data["activities"]
+                )
+                llm_data["user_activities"].append(app_data)
 
-                    activity_data["interactions"].append(interaction_data)
-
-                app_data["activities"].append(activity_data)
-
-            llm_data["user_activities"].append(app_data)
-
-        # 从raw_events中提取截图（作为备选方案，确保没有遗漏）
-        if not llm_data["screenshots"] and all_events:
+        # 从raw_events中提取截图（作为备选方案，确保没有遗漏）- 保留原逻辑
+        if all_events:
             for event in all_events:
                 if event.get("event_type") == "screenshot":
-                    llm_data["screenshots"].append({
-                        "timestamp": event.get("timestamp", ""),
-                        "filepath": event.get("filepath", "")
-                    })
+                    filepath = event.get("filepath", "")
+                    
+                    # 检查是否已存在
+                    screenshot_exists = False
+                    for existing in llm_data["screenshots"]:
+                        if existing.get("filepath") == filepath:
+                            screenshot_exists = True
+                            break
+                    
+                    if not screenshot_exists:
+                        llm_data["screenshots"].append({
+                            "timestamp": event.get("timestamp", ""),
+                            "filepath": filepath
+                        })
 
-        # 按时间戳排序截图
-        llm_data["screenshots"].sort(key=lambda x: x.get("timestamp", ""))
 
-        # 从raw_events中提取文本输入内容，确保VLM能看到用户输入的文本
+        # 从raw_events中提取文本输入内容（保留原逻辑）
         if all_events:
-            seen_contents = set()  # 去重，避免重复的相同输入
+            seen_contents = set()
             for event in all_events:
                 if (event.get("event_type") == "ui_event" and
                     event.get("action") == "text_input" and
@@ -1226,10 +1223,6 @@ class DataProcessor:
                             "app_package": event.get("app_package", ""),
                             "content": content
                         })
-
-        # 添加原始事件数据（可选，用于更详细的分析）
-        if "events" in session:
-            llm_data["raw_events"] = session["events"]
 
         return llm_data
     
@@ -1672,156 +1665,6 @@ class BehaviorAnalyzer:
             dir_path = os.path.join(self.output_dir, subdir)
             if not os.path.exists(dir_path):
                 os.makedirs(dir_path)
-    
-    def start_background_learning(self):
-        """启动后台学习模式"""
-        global learning_active, learning_thread
-        
-        if learning_active:
-            print("后台学习模式已在运行中")
-            return
-        
-        learning_active = True
-        learning_thread = threading.Thread(target=self._background_learning_worker)
-        learning_thread.daemon = True
-        learning_thread.start()
-        print("后台学习模式已启动")
-    
-    def stop_background_learning(self):
-        """停止后台学习模式"""
-        global learning_active
-        
-        if not learning_active:
-            print("后台学习模式未运行")
-            return
-        
-        learning_active = False
-        if learning_thread and learning_thread.is_alive():
-            learning_thread.join(timeout=5)
-        print("后台学习模式已停止")
-    
-    def _background_learning_worker(self):
-        """后台学习工作线程"""
-        global learning_active
-        
-        # 启动数据收集
-        self.collector.start_collection(duration_seconds=0)  # 0表示无限期运行
-        
-        try:
-            last_process_time = time.time()
-            process_interval = 60  # 每60秒处理一次数据
-            
-            while learning_active:
-                current_time = time.time()
-                
-                # 检查是否需要处理数据
-                if current_time - last_process_time >= process_interval:
-                    # 处理收集到的数据
-                    self._process_collected_data()
-                    last_process_time = current_time
-                
-                # 短暂休眠，避免CPU占用过高
-                time.sleep(1)
-        finally:
-            # 停止数据收集
-            self.collector.stop_collection()
-    
-    def _process_collected_data(self):
-        """
-        处理收集到的数据
-
-        注意：为了避免数据竞争，只处理非最新的文件。
-        最新的文件可能还在被 DataCollector 写入。
-        """
-        try:
-            # 获取最新的数据文件
-            raw_dir = os.path.join(self.output_dir, "raw")
-            logcat_files = sorted([f for f in os.listdir(raw_dir) if f.startswith("logcat_")])
-            uiautomator_files = sorted([f for f in os.listdir(raw_dir) if f.startswith("uiautomator_")])
-            window_files = sorted([f for f in os.listdir(raw_dir) if f.startswith("window_")])
-
-            # 只处理非最新的文件（倒数第二个文件是已完成的）
-            if len(logcat_files) < 2 or len(uiautomator_files) < 2 or len(window_files) < 2:
-                return  # 没有足够的已完成数据文件
-
-            # 获取倒数第二个文件（避免读取正在写入的最新文件）
-            logcat_file = os.path.join(raw_dir, logcat_files[-2])
-            uiautomator_file = os.path.join(raw_dir, uiautomator_files[-2])
-            window_file = os.path.join(raw_dir, window_files[-2])
-            
-            # 获取截图文件
-            screenshot_dir = self.collector.screenshot_collector.output_dir
-            screenshot_files = []
-            if os.path.exists(screenshot_dir):
-                screenshot_files = [os.path.join(screenshot_dir, f) for f in os.listdir(screenshot_dir) if f.startswith("screenshot_")]
-            
-            # 解析数据
-            logcat_events = self.parser.parse_logcat_data(logcat_file)
-            uiautomator_events = self.parser.parse_uiautomator_data(uiautomator_file)
-            window_events = self.parser.parse_window_data(window_file)
-            
-            # 解析截图事件
-            screenshot_events = []
-            for screenshot_file in screenshot_files:
-                # 从文件名提取时间戳
-                filename = os.path.basename(screenshot_file)
-                timestamp_match = re.search(r'screenshot_(\d{8}_\d{6}_\d{3})\.png', filename)
-                if timestamp_match:
-                    timestamp_str = timestamp_match.group(1)
-                    try:
-                        timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S_%f")
-                        timestamp_iso = timestamp.isoformat() + "Z"
-                        screenshot_events.append({
-                            "timestamp": timestamp_iso,
-                            "source": "screenshot",
-                            "event_type": "screenshot",
-                            "filepath": screenshot_file
-                        })
-                    except ValueError:
-                        continue
-            
-            # 合并和排序事件
-            all_events = self.processor.merge_and_sort_events(logcat_events, uiautomator_events, window_events, screenshot_events)
-            
-            # 分割会话
-            sessions = self.processor.segment_into_sessions(all_events)
-            
-            # 处理每个会话
-            processed_sessions = []
-            all_search_content = []  # 收集所有会话的搜索内容
-            
-            for session in sessions:
-                context_window = self.processor.build_context_window(session)
-                if context_window:
-                    # 添加原始事件数据
-                    context_window["events"] = session["events"]
-                    processed_sessions.append(context_window)
-                    
-                    # 收集搜索内容
-                    if "search_content" in context_window:
-                        all_search_content.extend(context_window["search_content"])
-                    
-                    # 保存会话数据
-                    session_file = os.path.join(self.output_dir, "sessions", f"{session['session_id']}.json")
-                    with open(session_file, 'w', encoding='utf-8') as f:
-                        json.dump(context_window, f, indent=2, ensure_ascii=False)
-            
-            # 保存所有搜索内容
-            if all_search_content:
-                self.save_search_content(all_search_content)
-            
-            # 保存索引文件
-            index_file = os.path.join(self.output_dir, "index.json")
-            with open(index_file, 'w', encoding='utf-8') as f:
-                json.dump({
-                    "total_sessions": len(processed_sessions),
-                    "sessions": [{"session_id": s["context_window"]["start_time"], "file": f"sessions/{s['context_window']['start_time']}.json"} for s in processed_sessions]
-                }, f, indent=2, ensure_ascii=False)
-            
-            print(f"后台处理完成，处理了 {len(processed_sessions)} 个会话")
-                
-        except Exception as e:
-            print(f"后台处理数据时出错: {str(e)}")
 
     def prepare_for_vlm_batch(self, sessions):
         """
@@ -1929,18 +1772,19 @@ class BehaviorAnalyzer:
             generate_session_id, create_session_folder,
             create_session_metadata, update_master_index
         )
-
+        
         print(f"开始收集数据，将持续 {duration_seconds} 秒...")
 
         # 生成会话ID
         session_id = generate_session_id()
+        # session_id = '20260111_175757_471e'
         print(f"会话ID: {session_id}")
 
         # 创建会话文件夹结构
         session_folder = create_session_folder(self.output_dir, session_id)
         print(f"会话文件夹: {session_folder}")
 
-        # 初始化收集器（使用session-specific路径）
+        # # 初始化收集器（使用session-specific路径）
         collector = DataCollector(
             os.path.join(session_folder, "raw"),
             session_id=session_id
@@ -1966,22 +1810,10 @@ class BehaviorAnalyzer:
             print("错误：缺少必要的数据文件")
             return None
 
-        # 获取截图文件
-        screenshot_dir = os.path.join(session_folder, "screenshots")
-        screenshot_files = []
-        if os.path.exists(screenshot_dir):
-            screenshot_files = [
-                os.path.join(screenshot_dir, f)
-                for f in os.listdir(screenshot_dir)
-                if f.endswith(".png")
-            ]
-
         # 解析数据
         logcat_events = self.parser.parse_logcat_data(logcat_file)
         uiautomator_events = self.parser.parse_uiautomator_data(uiautomator_file)
         window_events = self.parser.parse_window_data(window_file)
-
-        # 解析截图事件（使用三层回退策略，兼容多种命名格式）
         screenshot_events = []
 
         # 首先合并已解析的事件，构建截图时间戳映射
@@ -1997,177 +1829,73 @@ class BehaviorAnalyzer:
                 if filepath and timestamp:
                     screenshot_timestamp_map[filepath] = timestamp
 
+        screenshots_dir = os.path.join(session_folder, "screenshots")
         # 处理截图文件
-        if screenshot_files:
-            for screenshot_file in screenshot_files:
-                filename = os.path.basename(screenshot_file)
+        for filename in sorted(os.listdir(screenshots_dir)):
+            if filename.endswith('.png'):
                 rel_path = os.path.join("screenshots", filename)
 
-                try:
-                    # 优先级1：从已解析事件的映射中查找时间戳
-                    timestamp = screenshot_timestamp_map.get(rel_path)
+                # Try to find timestamp from map first
+                timestamp = screenshot_timestamp_map.get(rel_path)
 
-                    if not timestamp:
-                        # 优先级2：尝试从文件修改时间获取时间戳
-                        try:
-                            mtime = os.path.getmtime(screenshot_file)
-                            timestamp = datetime.fromtimestamp(mtime).isoformat() + "Z"
-                        except:
-                            # 优先级3：最后的回退方案，使用当前时间
-                            timestamp = datetime.now().isoformat() + "Z"
+                if not timestamp:
+                    # Fallback to file modification time
+                    filepath = os.path.join(screenshots_dir, filename)
+                    
+                    mtime = os.path.getmtime(filepath)
+                    timestamp = datetime.fromtimestamp(mtime).isoformat() + "Z"
 
-                    # 只添加不在映射中的截图（去重）
-                    if rel_path not in screenshot_timestamp_map:
-                        screenshot_events.append({
-                            "timestamp": timestamp,
-                            "event_type": "screenshot",
-                            "source": "screenshot",
-                            "filepath": rel_path
-                        })
-                except Exception:
-                    continue
+                # Only add if not already in combined_events
+                if rel_path not in screenshot_timestamp_map:
+                    screenshot_events.append({
+                        "timestamp": timestamp,
+                        "event_type": "screenshot",
+                        "source": "screenshot",
+                        "filepath": rel_path
+                    })
 
         print(f"解析完成：logcat事件 {len(logcat_events)} 个，uiautomator事件 {len(uiautomator_events)} 个，window事件 {len(window_events)} 个，截图 {len(screenshot_events)} 个")
 
-        # 合并和排序事件
-        all_events = self.processor.merge_and_sort_events(logcat_events, uiautomator_events, window_events, screenshot_events)
 
-        # 分割会话
-        sessions = self.processor.segment_into_sessions(all_events)
-        print(f"识别出 {len(sessions)} 个会话")
+        # Combine all events
+        all_events = combined_events + screenshot_events
+        # Sort by timestamp
+        all_events.sort(key=lambda x: x.get("timestamp", ""))
 
-        # 获取会话时间范围
-        if sessions:
-            session_start_time = sessions[0]["start_time"]
-            # 获取最后一个会话的结束时间
-            session_end_time = sessions[-1]["events"][-1]["timestamp"] if sessions[-1]["events"] else session_start_time
-        else:
-            session_start_time = datetime.now().isoformat() + "Z"
-            session_end_time = session_start_time
+        # Get session start time from first event
+        start_time = all_events[0].get("timestamp") if all_events else datetime.now().isoformat() + "Z"
+        end_time = all_events[-1].get("timestamp") if all_events else datetime.now().isoformat() + "Z"
 
-        # 处理每个会话
-        processed_sessions = []
-        all_search_content = []  # 收集所有会话的搜索内容
-
-        for session in sessions:
-            context_window = self.processor.build_context_window(session)
-            if context_window:
-                # 添加原始事件数据
-                context_window["events"] = session["events"]
-                processed_sessions.append(context_window)
-
-                # 收集搜索内容
-                if "search_content" in context_window:
-                    all_search_content.extend(context_window["search_content"])
-
-        # 创建会话元数据
-        metadata = create_session_metadata(
-            session_id=session_id,
-            start_time=session_start_time,
-            end_time=session_end_time,
-            status="completed",
-            statistics={
-                "total_events": len(all_events),
-                "screenshot_count": len(screenshot_events),
-                "app_sessions": len(processed_sessions)
-            }
-        )
-
-        # 保存metadata.json
-        metadata_file = os.path.join(session_folder, "metadata.json")
-        with open(metadata_file, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
-
-        # 保存处理后的events.json
-        events_file = os.path.join(session_folder, "processed", "events.json")
         events_data = {
             "session_id": session_id,
+            "start_time": start_time,
+            "end_time": end_time,
             "events": all_events
         }
-        with open(events_file, 'w', encoding='utf-8') as f:
-            json.dump(events_data, f, indent=2, ensure_ascii=False)
 
-        # 保存会话摘要（LLM就绪格式）
-        summary_file = os.path.join(session_folder, "processed", "session_summary.json")
-        if processed_sessions:
-            summary_data = self.processor.prepare_for_llm({
-                "context_window": {
-                    "start_time": session_start_time,
-                    "end_time": session_end_time
-                },
-                "app_sessions": [s for s in processed_sessions],
-                "events": all_events,
-                "search_content": all_search_content
-            })
-            with open(summary_file, 'w', encoding='utf-8') as f:
-                json.dump(summary_data, f, indent=2, ensure_ascii=False)
+        processed_dir = os.path.join(session_folder, "processed")
+        events_file = os.path.join(processed_dir, "events.json")
+        with open(events_file, "w", encoding="utf-8") as f:
+            json.dump(events_data, f, ensure_ascii=False, indent=2)
 
-        # 更新全局索引
-        update_master_index(self.output_dir, session_id, metadata)
+        processor = DataProcessor()
+
+        session_summary_data = processor.build_context_window(events_data)
+        session_summary_data["events"] = all_events  # Add raw events for prepare_for_llm
+
+        summary_file = os.path.join(processed_dir, "session_summary.json")
+        with open(summary_file, "w", encoding="utf-8") as f:
+            json.dump(session_summary_data, f, ensure_ascii=False, indent=2)
+
+        data_for_vlm = processor.prepare_for_llm(session_summary_data)
+        data_for_vlm["session_id"] = session_id
+
+        vlm_file = os.path.join(processed_dir, f"{session_id}_for_vlm.json")
+        with open(vlm_file, "w", encoding="utf-8") as f:
+            json.dump(data_for_vlm, f, ensure_ascii=False, indent=2)
 
         print(f"处理完成，结果已保存到 {session_folder}")
-        return session_id  # 返回会话ID而不是processed_sessions
-    
-    def get_latest_session_for_llm(self):
-        """获取最新的会话数据并转换为适合LLM处理的格式"""
-        from src.learning.utils import load_session_metadata, load_session_events, list_all_sessions
-
-        # 获取所有会话列表
-        all_sessions = list_all_sessions(self.output_dir)
-        if not all_sessions:
-            return None
-
-        # 按修改时间获取最新会话（最后一个）
-        latest_session_id = all_sessions[-1]
-
-        # 加载会话元数据和事件
-        metadata = load_session_metadata(self.output_dir, latest_session_id)
-        if not metadata:
-            return None
-
-        # 加载会话事件
-        session_events = load_session_events(self.output_dir, latest_session_id)
-        if not session_events:
-            return None
-
-        # 构建适合LLM的数据格式
-        session_folder = os.path.join(self.output_dir, "sessions", latest_session_id)
-        processed_dir = os.path.join(session_folder, "processed")
-
-        # 读取 session_summary.json
-        summary_file = os.path.join(processed_dir, "session_summary.json")
-        llm_data = None
-        if os.path.exists(summary_file):
-            with open(summary_file, 'r', encoding='utf-8') as f:
-                llm_data = json.load(f)
-
-        if not llm_data:
-            return None
-
-        # 添加元数据信息
-        llm_data["session_id"] = latest_session_id
-        llm_data["metadata"] = metadata
-
-        # 处理截图路径
-        screenshot_dir = os.path.join(session_folder, "screenshots")
-        if os.path.exists(screenshot_dir):
-            screenshot_files = [
-                os.path.join(screenshot_dir, f)
-                for f in os.listdir(screenshot_dir)
-                if f.endswith(".png")
-            ]
-            llm_data["screenshots"] = [
-                {"filepath": f, "filename": os.path.basename(f)}
-                for f in sorted(screenshot_files)
-            ]
-
-        # 保存LLM数据到会话的processed目录
-        llm_file = os.path.join(processed_dir, f"{latest_session_id}_llm.json")
-        os.makedirs(processed_dir, exist_ok=True)
-        with open(llm_file, 'w', encoding='utf-8') as f:
-            json.dump(llm_data, f, indent=2, ensure_ascii=False)
-
-        return llm_data
+        return session_id, data_for_vlm
     
     def save_llm_data(self, session_data, filename=None, session_id=None):
         """保存LLM数据到文件"""
@@ -2188,77 +1916,3 @@ class BehaviorAnalyzer:
         
         print(f"LLM数据已保存到: {file_path}")
         return file_path
-    
-    def save_search_content(self, search_content, filename=None):
-        """保存搜索内容到文件
-        
-        Args:
-            search_content: 搜索内容列表
-            filename: 输出文件名，如果为None则使用默认文件名
-        """
-        if filename is None:
-            filename = "search_content.json"
-        
-        output_dir = os.path.join(self.output_dir, "processed")
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-        
-        file_path = os.path.join(output_dir, filename)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(search_content, f, indent=2, ensure_ascii=False)
-        
-        return file_path
-
-
-if __name__ == "__main__":
-    import sys
-    
-    # 检查命令行参数
-    if len(sys.argv) > 1 and sys.argv[1] == "--vlm":
-        # 运行VLM分析
-        from vlm_analyzer import VLMAnalyzer
-        import json
-        
-        # 检查配置文件
-        config_file = "config.json"
-        if not os.path.exists(config_file):
-            print(f"错误: 配置文件 {config_file} 不存在")
-            print("请复制 config.json.example 为 config.json 并填入您的API密钥")
-            sys.exit(1)
-        
-        # 读取配置
-        with open(config_file, "r", encoding="utf-8") as f:
-            config = json.load(f)
-            api_key = config.get("api_key")
-            model = config.get("model", "glm-4.1v-thinking-flash")
-        
-        if not api_key:
-            print("错误: 配置文件中未找到API密钥")
-            sys.exit(1)
-        
-        # 创建VLM分析器
-        analyzer = VLMAnalyzer(api_key=api_key, model=model, api_url=config.get("api_url"))
-        
-        # 分析最新会话
-        sessions_dir = "data/processed"
-        if not os.path.exists(sessions_dir):
-            print(f"错误: 目录 {sessions_dir} 不存在")
-            sys.exit(1)
-    else:
-        # 默认行为：使用已有会话数据进行测试
-        analyzer = BehaviorAnalyzer()
-        
-        # 直接使用已有的会话数据进行测试，不重新收集
-        print("使用已有会话数据进行测试...")
-        
-        # 获取最新会话用于LLM
-        latest_session = analyzer.get_latest_session_for_llm()
-        if latest_session:
-            print("\n最新会话数据（用于LLM分析）：")
-            print(json.dumps(latest_session, indent=2, ensure_ascii=False))
-            
-            # 指出feed给LLM的文件路径
-            print(f"\n可以将以下文件喂给LLM进行分析：")
-            print(f"文件路径: {os.path.join(analyzer.processed_dir, sorted(os.listdir(analyzer.processed_dir))[-1])}")
-        else:
-            print("没有找到会话数据")

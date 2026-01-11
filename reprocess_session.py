@@ -12,11 +12,9 @@ from src.learning.vlm_analyzer import VLMAnalyzer
 from src.learning.behavior_summarizer import BehaviorSummarizer
 
 
-def load_config():
-    config_file = "config.json"
-    with open(config_file, "r", encoding="utf-8") as f:
-        config = json.load(f)
-        return config["learning_config"]
+def load_config(dir = "config.json"):
+    with open(dir, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def process_session(session_id: str = "20260111_185143_77de"):
@@ -114,7 +112,6 @@ def process_session(session_id: str = "20260111_185143_77de"):
     processor = DataProcessor()
     app_sessions = processor.build_app_sessions(all_events)
 
-
     # Count activities and interactions
     total_activities = 0
     total_interactions = 0
@@ -127,18 +124,7 @@ def process_session(session_id: str = "20260111_185143_77de"):
             interactions = activity.get("interactions", [])
             total_interactions += len(interactions)
 
-
-    # =========================================================================
-    # STEP 4: Build context window
-    # =========================================================================
-
-    context_result = processor.build_context_window(events_data)
-
-    # =========================================================================
-    # STEP 6: Save session_summary.json
-    # =========================================================================
-
-    session_summary_data = context_result.copy()
+    session_summary_data = processor.build_context_window(events_data)
     session_summary_data["session_id"] = session_id
     session_summary_data["events"] = all_events  # Add raw events for prepare_for_llm
 
@@ -151,31 +137,7 @@ def process_session(session_id: str = "20260111_185143_77de"):
     # =========================================================================
 
     llm_data = processor.prepare_for_llm(session_summary_data)
-
-    user_activities = llm_data.get("user_activities")
-    screenshots = llm_data.get("screenshots")
-
-    activities_with_data = sum(
-        1 for app in user_activities
-        if len(app.get("activities", [])) > 0
-    )
-    # Add data quality metrics
-    llm_data["data_quality"] = {
-        "total_events": len(all_events),
-        "total_interactions": total_interactions,
-        "total_screenshots": len(screenshots),
-        "apps_with_data": activities_with_data,
-        "coverage_percentage": (
-            (total_interactions + len(screenshots)) / len(all_events) * 100
-            if all_events else 0
-        )
-    }
-
     llm_data["session_id"] = session_id
-
-    # =========================================================================
-    # STEP 8: Save _llm.json
-    # =========================================================================
 
     with open(llm_file, "w", encoding="utf-8") as f:
         json.dump(llm_data, f, ensure_ascii=False, indent=2)
@@ -184,8 +146,9 @@ def process_session(session_id: str = "20260111_185143_77de"):
     # STEP 9: VLM Analysis
     # =========================================================================
     config = load_config()
+    learning_config = config["learning_config"]
 
-    vlm_analyzer = VLMAnalyzer(api_key=config.get("api_key"), model=config.get("model"))
+    vlm_analyzer = VLMAnalyzer(api_key=learning_config.get("api_key"), model=learning_config.get("model"))
     vlm_analysis = vlm_analyzer.analyze_session_with_screenshots(llm_data)
 
     with open(vlm_file, "w", encoding="utf-8") as f:
@@ -195,10 +158,8 @@ def process_session(session_id: str = "20260111_185143_77de"):
     # STEP 10: Behavior Summarization (LLM synthesis of VLM results)
     # =========================================================================
 
-    behavior_summary = None
-
-    config = load_config()
-    behavior_summarizer = BehaviorSummarizer(config)
+    summary_config = config["summary_config"]
+    behavior_summarizer = BehaviorSummarizer(summary_config)
 
     vlm_outputs_list = [
         {
@@ -213,25 +174,8 @@ def process_session(session_id: str = "20260111_185143_77de"):
     with open(behavior_summary_file, "w", encoding="utf-8") as f:
         json.dump(behavior_summary, f, ensure_ascii=False, indent=2)
 
-    # =========================================================================
-    # STEP 11: Summary and validation
-    # =========================================================================
-    return {
-        "session_id": session_id,
-        "events_file": events_file,
-        "summary_file": summary_file,
-        "llm_file": llm_file,
-        "vlm_file": vlm_file,
-        "behavior_summary_file": behavior_summary_file,
-        "stats": {
-            "total_events": len(all_events),
-            "app_sessions": len(app_sessions),
-            "activities": total_activities,
-            "interactions": total_interactions,
-            "screenshots": len(llm_data.get('screenshots', []))
-        }
-    }
+    return True
 
 
 if __name__ == "__main__":
-    result = process_session()
+    process_session()

@@ -32,14 +32,7 @@ from src.learning.behavior_analyzer import BehaviorAnalyzer
 from src.learning.vlm_analyzer import VLMAnalyzer
 
 # 导入本地模块
-from src.core.observer import UserObserver
 from src.core.refiner import InstructionRefiner
-from src.shared.utils import check_model_api
-
-
-
-
-
 
 class PersonalUI:
     """PersonalUI系统主类，整合所有功能模块"""
@@ -56,7 +49,6 @@ class PersonalUI:
         # 加载配置并合并命令行参数
         self.config = self._load_and_merge_config(config_path)
         self.refiner = InstructionRefiner(model_config=self._get_model_config())
-        self.observer = UserObserver()
         self.phone_agent = None
         self.behavior_analyzer = BehaviorAnalyzer()
         self.vlm_analyzer = None
@@ -174,33 +166,25 @@ class PersonalUI:
             print(f"GraphRAG API连接失败: {e}")
             return False
 
-    def start_learning_mode(self, duration: Optional[int] = None, background: bool = False):
+    def start_learning_mode(self, duration: Optional[int] = None):
         """启动学习模式"""
         print("🎓 启动学习模式...")
         
-        if background:
-            # 后台学习模式
-            self.behavior_analyzer.start_background_learning()
-            print("后台学习模式已启动，按Ctrl+C停止")
-            while True:
-                time.sleep(1)
+        session_id,data_for_vlm = self.behavior_analyzer.collect_and_process(duration_seconds=duration)
+
+        if session_id and self.vlm_analyzer:
+            # 生成和分析LLM数据（传递会话ID）
+            print("使用VLM分析用户行为数据...")
+
+            vlm_analysis = self.vlm_analyzer.analyze_session_with_screenshots(data_for_vlm)
+
+            with open('data/sessions/{0}/analysis/{0}_vlm.json'.format(session_id), "w", encoding="utf-8") as f:
+                json.dump(vlm_analysis, f, ensure_ascii=False, indent=2)
+
+        elif not self.vlm_analyzer:
+            print("⚠️ VLM Analyzer 未配置，跳过视觉分析")
         else:
-            # 前台学习模式
-            session_id = self.behavior_analyzer.collect_and_process(duration_seconds=duration)
-
-            if session_id and self.vlm_analyzer:
-                # 生成和分析LLM数据（传递会话ID）
-                print("🔍 分析用户行为数据...")
-                result = self.vlm_analyzer.analyze_and_save_latest_session(self.behavior_analyzer, session_id=session_id)
-
-                if result and "error" not in result:
-                    print(f"✅ 分析完成: {result.get('session_id')}")
-                else:
-                    print(f"⚠️ 分析失败: {result.get('error', '未知错误')}")
-            elif not self.vlm_analyzer:
-                print("⚠️ VLM Analyzer 未配置，跳过视觉分析")
-            else:
-                print("⚠️ 未收集到足够的会话数据")
+            print("⚠️ 未收集到足够的会话数据")
     
     def _store_analysis_to_graphrag(self, analysis_result: Dict[str, Any]):
         """将分析结果存储到GraphRAG API"""
@@ -331,11 +315,6 @@ class PersonalUI:
                 self.phone_agent.reset()
             except Exception as e:
                 print(f"❌ 执行任务时发生错误: {e}")
-
-    def start_observer_mode(self):
-        """启动观察模式"""
-        print("👁️ 启动观察模式...")
-        self.observer.start_learning_loop()
     
 
 

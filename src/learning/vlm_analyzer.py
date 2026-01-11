@@ -35,29 +35,6 @@ class VLMAnalyzer:
         }
 
     def _safe_format_template(self, template: str, **kwargs) -> str:
-        """
-        安全的模板格式化方法，支持两种语法：
-        1. 旧格式：{user_activities} 和 {screenshots_info}（使用.format()）
-        2. 新格式：$user_activities 和 $screenshots_info（使用string.Template）
-
-        这样可以避免字面JSON中的 {...} 被误解为格式占位符。
-
-        Args:
-            template: 包含占位符的模板字符串
-            **kwargs: 格式化参数
-
-        Returns:
-            格式化后的字符串
-        """
-        # 先尝试新格式（使用$variables）
-        if "$user_activities" in template or "$screenshots_info" in template:
-            try:
-                return Template(template).safe_substitute(**kwargs)
-            except Exception:
-                pass
-
-        # 后退到旧格式（使用{variables}）
-        # 但我们需要更安全的方法来避免JSON字面量冲突
         # 使用正则表达式只替换明确的占位符
         result = template
         for key, value in kwargs.items():
@@ -264,9 +241,6 @@ class VLMAnalyzer:
 用户输入的文本内容：
 {text_inputs}
 
-截图信息：
-{screenshots_info}
-
 请基于截图内容、交互日志和用户输入的文本，详细分析用户行为。特别注意：
 - 聊天类应用：提取聊天对象名称、群名、发送的具体消息内容（包括用户输入的文本）
 - 购物类应用：提取商品名称、价格、下单金额、搜索内容
@@ -322,24 +296,10 @@ class VLMAnalyzer:
         else:
             text_inputs_text = "无文本输入\n"
 
-        # 格式化截图信息
-        screenshots_text = ""
-        screenshots = session_data.get("screenshots", [])
-        for i, screenshot in enumerate(screenshots):
-            timestamp = screenshot.get("timestamp", "未知时间")
-            filepath = screenshot.get("filepath", "")
-            screenshots_text += f"截图 {i+1}: {timestamp}\n"
-            screenshots_text += f"  文件路径: {filepath}\n"
-
-        # 填充提示模板 - 使用安全的格式化方法
-        # 处理两种情况：
-        # 1. 新格式（含字面JSON）：使用 string.Template，需要 $user_activities 和 $screenshots_info
-        # 2. 旧格式（简单占位符）：使用 .format()
         prompt = self._safe_format_template(
             prompt_template,
             user_activities=user_activities_text,
             text_inputs=text_inputs_text,
-            screenshots_info=screenshots_text
         )
 
         # 准备消息内容
@@ -443,203 +403,3 @@ class VLMAnalyzer:
                 
         except Exception as e:
             return {"error": f"请求异常: {str(e)}"}
-    
-
-    def analyze_app_sessions_batch(self, app_sessions_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        批量分析多个Application Session
-
-        输入: prepare_for_vlm_batch的输出
-        输出: List[VLMAnalysisResult]
-
-        优化：
-        - 支持并发调用（asyncio + aiohttp）
-        - 错误处理（单个失败不影响整体）
-        - 进度跟踪（用于长时间离线分析）
-        """
-        results = []
-
-        for i, app_session in enumerate(app_sessions_data):
-            print(f"分析进度: {i+1}/{len(app_sessions_data)} ({(i+1)/len(app_sessions_data)*100:.1f}%)")
-
-            try:
-                # 获取应用特定的prompt
-                app_package = app_session.get('app_package', '')
-                prompt_template = self.get_app_specific_prompt(app_package)
-
-                # 调用VLM分析
-                analysis_result = self.analyze_session_with_screenshots(app_session, prompt_template)
-
-                # 提取结果
-                if "error" not in analysis_result and "analysis" in analysis_result:
-                    vlm_output = {
-                        "app_session_id": app_session.get('app_session_id', ''),
-                        "app_name": app_session.get('app_name', ''),
-                        "app_package": app_package,
-                        "start_time": app_session.get('start_time', ''),
-                        "duration": app_session.get('duration', 0),
-                        "analysis": analysis_result.get('analysis', {}),
-                        "confidence": analysis_result.get('analysis', {}).get('confidence', 0),
-                        "model": self.model,
-                        "status": "success"
-                    }
-                else:
-                    vlm_output = {
-                        "app_session_id": app_session.get('app_session_id', ''),
-                        "app_name": app_session.get('app_name', ''),
-                        "error": analysis_result.get('error', '未知错误'),
-                        "status": "failed"
-                    }
-
-                results.append(vlm_output)
-
-            except Exception as e:
-                print(f"分析失败 {app_session.get('app_session_id', '')}: {str(e)}")
-                results.append({
-                    "app_session_id": app_session.get('app_session_id', ''),
-                    "app_name": app_session.get('app_name', ''),
-                    "error": str(e),
-                    "status": "failed"
-                })
-
-        return results
-
-    def analyze_and_save_latest_session(self, behavior_analyzer, session_id=None) -> Dict[str, Any]:
-        """
-        获取指定会话的LLM数据、进行VLM分析并保存结果
-
-        Args:
-            behavior_analyzer: BehaviorAnalyzer 实例
-            session_id: 会话ID。如果为None，则使用最新会话
-
-        Returns:
-            {
-                "session_id": 会话ID,
-                "llm_file": LLM数据文件路径,
-                "analysis_file": 分析结果文件路径,
-                "error": 错误信息（如果有）
-            }
-        """
-        try:
-            # 获取会话的LLM数据
-            if session_id:
-                # 直接加载指定会话的数据
-                from src.learning.utils import load_session_metadata
-
-                output_dir = behavior_analyzer.output_dir
-                session_folder = os.path.join(output_dir, "sessions", session_id)
-                processed_dir = os.path.join(session_folder, "processed")
-
-                # 加载数据
-                metadata = load_session_metadata(output_dir, session_id)
-                summary_file = os.path.join(processed_dir, "session_summary.json")
-
-                with open(summary_file, 'r', encoding='utf-8') as f:
-                    summary = json.load(f)
-
-                # 构建LLM数据
-                llm_data = {
-                    'session_id': session_id,
-                    'metadata': metadata,
-                    'sessions': summary.get('sessions', []),
-                }
-
-                # 添加截图
-                screenshot_dir = os.path.join(session_folder, 'screenshots')
-                if os.path.exists(screenshot_dir):
-                    screenshot_files = sorted([
-                        os.path.join(screenshot_dir, f)
-                        for f in os.listdir(screenshot_dir)
-                        if f.endswith('.png')
-                    ])
-                    llm_data['screenshots'] = [
-                        {'filepath': f, 'filename': os.path.basename(f)}
-                        for f in screenshot_files
-                    ]
-            else:
-                # 获取最新会话
-                llm_data = behavior_analyzer.get_latest_session_for_llm()
-                if not llm_data:
-                    return {"error": "无法生成LLM数据"}
-                session_id = llm_data.get("session_id")
-
-            if not session_id:
-                return {"error": "无法确定会话ID"}
-
-            output_dir = behavior_analyzer.output_dir
-            session_folder = os.path.join(output_dir, "sessions", session_id)
-            processed_dir = os.path.join(session_folder, "processed")
-            analysis_dir = os.path.join(session_folder, "analysis")
-
-            # 分析截图（如果有）
-            analysis_result = {
-                "session_id": session_id,
-                "timestamp": datetime.now().isoformat() + "Z",
-                "screenshots_analyzed": 0,
-                "analysis_results": []
-            }
-
-            if llm_data.get("screenshots"):
-                try:
-                    vlm_result = self.analyze_session_with_screenshots(llm_data)
-                    if vlm_result and "error" not in vlm_result:
-                        analysis_result["screenshots_analyzed"] = len(llm_data["screenshots"])
-                        analysis_result["analysis_results"].append(vlm_result)
-                        analysis_result["status"] = "success"
-                    else:
-                        analysis_result["status"] = "partial"
-                        analysis_result["error"] = vlm_result.get("error", "VLM分析失败")
-                except Exception as e:
-                    analysis_result["status"] = "partial"
-                    analysis_result["error"] = str(e)
-            else:
-                analysis_result["status"] = "no_screenshots"
-
-            # 保存LLM数据
-            os.makedirs(processed_dir, exist_ok=True)
-            llm_file = os.path.join(processed_dir, f"{session_id}_llm.json")
-            with open(llm_file, 'w', encoding='utf-8') as f:
-                json.dump(llm_data, f, indent=2, ensure_ascii=False)
-
-            # 保存分析结果
-            os.makedirs(analysis_dir, exist_ok=True)
-            analysis_file = os.path.join(analysis_dir, f"{session_id}_vlm_analysis.json")
-            with open(analysis_file, 'w', encoding='utf-8') as f:
-                json.dump(analysis_result, f, indent=2, ensure_ascii=False)
-
-            return {
-                "session_id": session_id,
-                "llm_file": llm_file,
-                "analysis_file": analysis_file,
-                "status": analysis_result.get("status", "unknown")
-            }
-
-        except Exception as e:
-            return {"error": f"分析失败: {str(e)}"}
-
-
-if __name__ == "__main__":
-    # 需要替换为实际的API密钥
-    API_KEY = "your_api_key_here"
-
-    # 创建分析器
-    analyzer = VLMAnalyzer(api_key=API_KEY)
-    
-    # 分析最新会话
-    sessions_dir = "data/processed"
-    result = analyzer.analyze_latest_session(sessions_dir)
-    
-    if "error" in result:
-        print(f"分析失败: {result['error']}")
-    else:
-        print(f"分析成功，结果已保存到: {result['output_file']}")
-        
-        # 打印分析结果
-        if "analysis" in result and "analysis" in result["analysis"]:
-            analysis = result["analysis"]["analysis"]
-            if "app_name" in analysis:
-                print(f"应用名称: {analysis['app_name']}")
-            if "main_action" in analysis:
-                print(f"主要行为: {analysis['main_action']}")
-            if "intent" in analysis:
-                print(f"用户意图: {analysis['intent']}")
