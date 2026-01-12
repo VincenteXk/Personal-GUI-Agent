@@ -26,7 +26,7 @@ from .actions import (
     schedule_do,
     schedule_finish,
 )
-from .prompts import get_scheduler_system_prompt, get_messages
+from .system_prompts import get_scheduler_system_prompt, get_messages
 
 __all__ = [
     # 核心Agent

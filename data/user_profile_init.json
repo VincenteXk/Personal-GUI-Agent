@@ -1,0 +1,24 @@
+{
+  "user_id": "default_user",
+  "language_style": "casual",
+  "common_apps": ["微信", "美团", "淘宝"],
+  "default_mode": "balanced",
+  "scene_preferences": {
+    "shopping": {
+      "price_priority": "medium",
+      "location_preference": "nearby",
+      "time_sensitivity": "flexible",
+      "app_preference": ["美团", "饿了么"]
+    },
+    "social": {
+      "like_rate": 0.3,
+      "comment_rate": 0.1,
+      "message_tone": "friendly"
+    },
+    "communication": {
+      "message_confirmation": true,
+      "preferred_contacts": []
+    }
+  },
+  "created_at": "2026-01-12"
+}

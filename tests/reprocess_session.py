@@ -18,7 +18,7 @@ def load_config(dir = "config.json"):
 
 
 def process_session(session_id: str = "20260111_185143_77de"):
-    base_path = f"data/sessions/{session_id}"
+    base_path = f"data/eval/profile3/{session_id}"
     raw_dir = os.path.join(base_path, "raw")
     screenshots_dir = os.path.join(base_path, "screenshots")
     processed_dir = os.path.join(base_path, "processed")
@@ -154,28 +154,10 @@ def process_session(session_id: str = "20260111_185143_77de"):
     with open(vlm_file, "w", encoding="utf-8") as f:
         json.dump(vlm_analysis, f, ensure_ascii=False, indent=2)
 
-    # =========================================================================
-    # STEP 10: Behavior Summarization (LLM synthesis of VLM results)
-    # =========================================================================
-
-    summary_config = config["summary_config"]
-    behavior_summarizer = BehaviorSummarizer(summary_config)
-
-    vlm_outputs_list = [
-        {
-            "status": "success" if vlm_analysis.get("success") else "error",
-            "analysis": vlm_analysis.get("analysis", {}),
-            **vlm_analysis
-        }
-    ]
-
-    behavior_summary = behavior_summarizer.summarize_cross_app_behavior(vlm_outputs_list)
-
-    with open(behavior_summary_file, "w", encoding="utf-8") as f:
-        json.dump(behavior_summary, f, ensure_ascii=False, indent=2)
 
     return True
 
 
 if __name__ == "__main__":
-    process_session()
+    for session_id in [i for i in os.listdir('data/eval/profile3') if not i.endswith('txt')]:
+        process_session(session_id)

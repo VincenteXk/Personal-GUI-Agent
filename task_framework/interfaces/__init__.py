@@ -3,7 +3,7 @@
 from .user_input import UserInputInterface
 from .user_interaction import UserInteractionInterface, InteractionType, Choice
 from .device_capability import DeviceCapabilityInterface
-from .profile_manager import ProfileManagerInterface
+from .profile_manager import ProfileManagerInterface, UserProfile, ScenePreference
 from .task_executor import (
     TaskExecutorInterface,
     ExecutionResult,
@@ -18,6 +18,8 @@ __all__ = [
     "Choice",
     "DeviceCapabilityInterface",
     "ProfileManagerInterface",
+    "UserProfile",
+    "ScenePreference",
     "TaskExecutorInterface",
     "ExecutionResult",
     "TaskCapability",

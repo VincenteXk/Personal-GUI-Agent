@@ -17,7 +17,7 @@ from playsound import playsound
 import io
 import re
 import tempfile
-import whisper
+from funasr import AutoModel
 from typing import Optional, Any, Dict, List
 from openai import OpenAI
 
@@ -76,8 +76,8 @@ class VoiceAssistant:
         # 初始化模型
         self.vad = webrtcvad.Vad()
         self.vad.set_mode(VAD_MODE)
-        print("加载 Whisper 模型...")
-        self.asr_model = whisper.load_model("medium")  # 模型缓存在 ~/.cache/whisper/
+        print("加载 FunASR 模型...")
+        self.asr_model = AutoModel(model="iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch")
 
         print("连接 DeepSeek API...")
         self.client = OpenAI(api_key=api_key, base_url=base_url)
@@ -185,30 +185,25 @@ class VoiceAssistant:
         if not audio_data:
             return None
 
-        # 使用内存中的音频数据，避免创建临时文件
-        audio_stream = io.BytesIO()
-        with wave.open(audio_stream, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(AUDIO_RATE)
-            wf.writeframes(audio_data)
-
-        audio_stream.seek(0)
         print(f"识别中...({len(audio_data)/AUDIO_RATE:.2f}秒)")
         start_time = time.time()
 
         try:
-            # 保存临时音频文件（Whisper 需要文件路径）
+            # 将音频数据转换为 WAV 格式
+            audio_stream = io.BytesIO()
+            with wave.open(audio_stream, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(AUDIO_RATE)
+                wf.writeframes(audio_data)
+
+            # 保存临时音频文件（FunASR 需要文件路径）
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
                 temp_audio.write(audio_stream.getvalue())
                 temp_path = temp_audio.name
 
-            # Whisper 识别
-            result = self.asr_model.transcribe(
-                temp_path,
-                language="zh",  # 指定中文
-                verbose=False
-            )
+            # FunASR 识别
+            result = self.asr_model.generate(input=temp_path, batch_size_s=300)
 
             # 清理临时文件
             os.remove(temp_path)
@@ -216,10 +211,12 @@ class VoiceAssistant:
             asr_time = time.time() - start_time
             print(f"识别耗时: {asr_time:.2f}秒")
 
-            text = result["text"].strip()
-            if text:
-                print(f"识别: {text}")
-                return text
+            # FunASR 返回列表格式的结果
+            if result and len(result) > 0:
+                text = result[0]["text"].strip() if isinstance(result[0], dict) else str(result[0]).strip()
+                if text:
+                    print(f"识别: {text}")
+                    return text
             return None
         except Exception as e:
             print(f"语音识别出错: {e}")
@@ -271,25 +268,29 @@ class VoiceAssistant:
         if not text:
             return
 
-        print("合成中...")
-        start_time = time.time()
-        temp_file = "temp_tts.mp3"
+        # 使用线程锁确保音频播放的线程安全
+        with self.audio_lock:
+            print("合成中...")
+            start_time = time.time()
+            
+            # 使用临时文件而不是固定文件名，避免文件冲突
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
+                temp_path = temp_file.name
 
-        # 创建通信对象并保存音频
-        communicate = edge_tts.Communicate(text, "zh-CN-XiaoyiNeural")
-        asyncio.run(communicate.save(temp_file))
-        tts_time = time.time() - start_time
-        print(f"TTS耗时: {tts_time:.2f}秒")
+            # 创建通信对象并保存音频
+            communicate = edge_tts.Communicate(text, "zh-CN-XiaoyiNeural")
+            asyncio.run(communicate.save(temp_path))
+            tts_time = time.time() - start_time
+            print(f"TTS耗时: {tts_time:.2f}秒")
 
-        # 播放音频
-        start_time = time.time()
-        playsound(temp_file, block=True)
-        play_time = time.time() - start_time
-        print(f"播放耗时: {play_time:.2f}秒")
+            # 播放音频
+            start_time = time.time()
+            playsound(temp_path, block=True)
+            play_time = time.time() - start_time
+            print(f"播放耗时: {play_time:.2f}秒")
 
-        # 删除临时文件
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
+            # 删除临时文件
+            os.remove(temp_path)
 
     def ask_question(self, question: str):
         """主动向用户提问并等待回答的完整流程"""

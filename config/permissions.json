@@ -1,0 +1,35 @@
+{
+  "user_id": "default_user",
+  "permissions": {
+    "background_screenshot": {
+      "enabled": true,
+      "description": "后台截屏学习用户习惯"
+    },
+    "remember_password": {
+      "enabled": false,
+      "description": "记住密码"
+    },
+    "auto_send_message": {
+      "mode": "confirm",
+      "description": "自动发送消息",
+      "options": ["auto", "confirm", "forbidden"]
+    },
+    "auto_delete": {
+      "mode": "forbidden",
+      "description": "自动删除文件/消息",
+      "options": ["auto", "confirm", "forbidden"]
+    },
+    "auto_payment": {
+      "mode": "forbidden",
+      "description": "自动支付",
+      "options": ["auto", "confirm", "forbidden"]
+    }
+  },
+  "meta_preferences": {
+    "update_preference_after_task": true,
+    "prefer_voice_over_text": false,
+    "confirmation_style": "popup"
+  },
+  "created_at": "2026-01-12",
+  "last_updated": "2026-01-12"
+}

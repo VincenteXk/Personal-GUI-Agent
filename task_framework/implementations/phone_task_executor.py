@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Any, Optional
+import os
 
 from src.AutoGLM.agent import PhoneAgent, AgentConfig as PhoneAgentConfig
 from src.AutoGLM.model import ModelClient, ModelConfig
@@ -48,7 +49,19 @@ class PhoneTaskExecutor(TaskExecutorInterface):
         model_config: Optional[ModelConfig] = None,
         phone_config: Optional[PhoneTaskConfig] = None,
     ):
-        self.model_config = model_config or ModelConfig()
+        # 如果没有提供model_config，使用phone-9B的硬编码配置
+        if model_config is None:
+            model_config = ModelConfig(
+                base_url="https://api-inference.modelscope.cn/v1",
+                api_key=os.getenv("PHONE_AGENT_API_KEY", ""),
+                model_name="ZhipuAI/AutoGLM-Phone-9B",
+                max_tokens=3000,
+                temperature=0.0,
+                top_p=0.85,
+                frequency_penalty=0.2,
+            )
+
+        self.model_config = model_config
         self.phone_config = phone_config or PhoneTaskConfig()
 
         # 创建PhoneAgent实例（每次执行任务时可以复用）
@@ -90,7 +103,7 @@ class PhoneTaskExecutor(TaskExecutorInterface):
             }
         """
         print(f"\n{'='*60}")
-        print(f"📱 PhoneTaskExecutor 开始执行")
+        print(f"PhoneTaskExecutor 开始执行")
         print(f"任务类型: {task_type}")
         print(f"任务参数: {task_params}")
         print(f"上下文: {context}")
@@ -119,17 +132,17 @@ class PhoneTaskExecutor(TaskExecutorInterface):
         if "max_steps" in task_params:
             self.phone_agent.agent_config.max_steps = task_params["max_steps"]
 
-        print(f"🎯 即将执行指令: {instruction}")
-        print(f"📋 最大步数: {self.phone_agent.agent_config.max_steps}")
+        print(f"即将执行指令: {instruction}")
+        print(f"最大步数: {self.phone_agent.agent_config.max_steps}")
         if self.phone_agent.agent_config.device_id:
-            print(f"📱 设备ID: {self.phone_agent.agent_config.device_id}")
+            print(f"设备ID: {self.phone_agent.agent_config.device_id}")
         print()
         # 执行任务
         try:
             # 重置agent状态
             self.phone_agent.reset()
 
-            print("🚀 开始执行PhoneAgent...")
+            print("开始执行PhoneAgent...")
             # 运行任务
             result_message = self.phone_agent.run(instruction)
 
@@ -137,7 +150,7 @@ class PhoneTaskExecutor(TaskExecutorInterface):
             agent_context = self.phone_agent.context
             step_count = self.phone_agent.step_count
 
-            print(f"\n✅ PhoneAgent执行完成")
+            print(f"\n执行完成")
             print(f"   执行步数: {step_count}")
             print(f"   结果消息: {result_message}\n")
 
@@ -153,7 +166,7 @@ class PhoneTaskExecutor(TaskExecutorInterface):
             )
 
         except Exception as e:
-            print(f"\n❌ PhoneAgent执行失败: {str(e)}\n")
+            print(f"\n执行失败: {str(e)}\n")
             return ExecutionResult(
                 success=False,
                 message=f"执行失败: {str(e)}",

@@ -28,7 +28,8 @@ class TaskAgentConfig:
 
     # 模式配置
     enable_onboarding: bool = True  # 是否启用首次引导
-    enable_voice_input: bool = False  # 是否启用语音输入
+    enable_voice_input: bool = False  # 是否启用语音输入 (已弃用，使用voice_mode)
+    voice_mode: bool = False  # 是否启用语音交互模式（输入+输出）
 
     # 执行配置
     timeout_per_step: int = 300  # 每步超时时间（秒）
@@ -40,6 +41,25 @@ class TaskAgentConfig:
 
     # 系统提示词配置
     system_prompt: Optional[str] = None  # 自定义系统提示词
+
+    # Subagent模型配置
+    onboarding_agent_model: str = "mimo-v2-flash"
+    minimal_ask_agent_model: str = "mimo-v2-flash"
+    plan_agent_model: str = "mimo-v2-flash"
+    preference_update_agent_model: str = "mimo-v2-flash"
+
+    # 文件路径配置
+    permissions_config_path: str = "config/permissions.json"
+    profile_init_path: str = "data/user_profile_init.json"
+    context_temp_dir: str = "temp/contexts"
+
+    # 功能开关
+    enable_minimal_ask: bool = True
+    enable_plan_preview: bool = True
+    enable_preference_update: bool = True
+
+    # Context管理
+    cleanup_context_after_task: bool = True
 
     def __post_init__(self):
         """配置验证。"""

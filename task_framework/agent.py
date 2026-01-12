@@ -19,7 +19,7 @@ from typing import Any, Optional
 from .config import TaskAgentConfig
 from .context import TaskContext, TaskInfo, TaskState
 from .actions import SchedulerActionHandler, parse_scheduler_action
-from .prompts import get_scheduler_system_prompt, get_messages
+from .system_prompts import get_scheduler_system_prompt, get_messages
 from openai import OpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 from .interfaces import (
@@ -153,6 +153,7 @@ class TaskAgent:
                     user_interaction=self.user_interaction,
                     task_executors=self.task_executors,
                     context=self.context,
+                    profile_manager=self.profile_manager,
                 )
 
                 # 接收用户输入
@@ -565,7 +566,7 @@ class TaskAgent:
             pass
 
         # 文本输入
-        return self.user_input.get_input("\n💬 请输入任务描述")
+        return self.user_input.get_input("\n请输入任务描述")
 
     def _run_onboarding(self) -> None:
         """运行首次引导流程。"""

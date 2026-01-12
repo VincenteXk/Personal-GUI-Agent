@@ -227,8 +227,13 @@ config.json
 # Data directory contents (keep directories but ignore contents)
 data/archive/*
 data/sessions/*
+data/eval/*
 data/master_index.json
 
 # Keep empty directories
 !data/archive/.gitkeep
 !data/sessions/.gitkeep
+!data/eval/.gitkeep
+
+# Temporary files and directories
+temp/

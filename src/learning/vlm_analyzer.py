@@ -312,6 +312,7 @@ class VLMAnalyzer:
             # 新格式：从session_id推断会话目录
             session_id = session_data["session_id"]
             session_base_dir = os.path.join("data", "sessions", session_id)
+            #session_base_dir = os.path.join('data','eval','profile3', session_id)
 
         # 添加截图（均匀添加前5张，避免token过多）
         for i, screenshot in enumerate(screenshots[::len(screenshots)//5]):

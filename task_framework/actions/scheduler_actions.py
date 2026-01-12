@@ -19,6 +19,7 @@ from ..interfaces import (
     TaskExecutorInterface,
     InteractionType,
     Choice,
+    ProfileManagerInterface,
 )
 
 
@@ -44,6 +45,7 @@ class SchedulerActionHandler:
         user_interaction: 用户交互接口
         task_executors: 任务执行器列表
         context: 任务上下文
+        profile_manager: 用户画像管理器（可选）
     """
 
     def __init__(
@@ -52,11 +54,13 @@ class SchedulerActionHandler:
         user_interaction: UserInteractionInterface,
         task_executors: list[TaskExecutorInterface],
         context: TaskContext,
+        profile_manager: Optional[ProfileManagerInterface] = None,
     ):
         self.user_input = user_input
         self.user_interaction = user_interaction
         self.task_executors = task_executors
         self.context = context
+        self.profile_manager = profile_manager
 
     def execute(self, action: dict[str, Any]) -> SchedulerActionResult:
         """
@@ -429,14 +433,44 @@ class SchedulerActionHandler:
 
     def _handle_update_profile(self, action: dict[str, Any]) -> SchedulerActionResult:
         """更新用户画像。"""
+        if not self.profile_manager:
+            return SchedulerActionResult(
+                success=False,
+                should_finish=False,
+                message="ProfileManager 未配置",
+            )
+
         profile_data = action.get("profile_data", {})
 
-        # 这里应该调用ProfileManager更新画像
-        # 简化实现
+        try:
+            # 获取当前画像
+            current_profile = self.profile_manager.get_profile()
 
-        return SchedulerActionResult(
-            success=True, should_finish=False, message="用户画像已更新"
-        )
+            # 更新字段
+            if "language_style" in profile_data:
+                current_profile.language_style = profile_data["language_style"]
+            if "common_apps" in profile_data:
+                current_profile.common_apps = profile_data["common_apps"]
+            if "default_mode" in profile_data:
+                current_profile.default_mode = profile_data["default_mode"]
+            if "preferences" in profile_data:
+                current_profile.preferences.update(profile_data["preferences"])
+
+            # 保存更新
+            self.profile_manager.update_profile(current_profile)
+
+            return SchedulerActionResult(
+                success=True,
+                should_finish=False,
+                message="用户画像已更新",
+                data={"profile": current_profile.__dict__},
+            )
+        except Exception as e:
+            return SchedulerActionResult(
+                success=False,
+                should_finish=False,
+                message=f"更新画像失败: {str(e)}",
+            )
 
     def _find_executor(self, task_type: str) -> Optional[TaskExecutorInterface]:
         """查找能处理指定任务类型的执行器。"""
