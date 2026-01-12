@@ -1,5 +1,7 @@
 # PersonalUI - 个性化Android GUI Agent系统
 
+[中文](README.md) | [English](README_en.md)
+
 ## 📋 项目概述
 
 PersonalUI 是一个基于 AutoGLM 框架的个性化 Android GUI agent 系统。系统通过两个核心模式为用户提供个性化的自动化操作体验：
