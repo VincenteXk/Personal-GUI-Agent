@@ -101,66 +101,6 @@ class VLMAnalyzer:
             print(f"图片编码失败: {e}")
             return None
 
-    def get_app_specific_prompt(self, app_package: str) -> str:
-        """
-        根据应用类型返回定制化prompt模板（包含占位符）
-
-        注意: JSON示例中的{{}}需要双重转义为{{{{}}}}：
-        - 第一次format(app_name)后变为{{}}
-        - 第二次format(user_activities, screenshots_info)后变为{}
-
-        Returns:
-            包含{user_activities}和{screenshots_info}占位符的prompt模板
-        """
-        base_template = """你是一个Android应用行为分析专家。请分析用户在{app_name}中的操作序列。
-
-用户活动信息：
-{user_activities}
-
-截图信息：
-{screenshots_info}
-
-请提取标准化的action chain，使用以下action类型：
-- search: 搜索内容
-- browse: 浏览/滚动
-- click: 点击操作
-- input: 输入文本
-- view_detail: 查看详情
-- add_to_cart: 加入购物车
-- order: 下单
-- pay: 支付
-- share: 分享
-- other: 其他操作
-
-输出JSON格式：
-{{{{
-  "actions": [
-    {{"type": "...", "target": "具体对象", "timestamp_offset": 秒数, "details": "..."}},
-    ...
-  ],
-  "summary": "一句话总结用户意图"
-}}}}
-
-优化提示（P1改进）：
-- 活动停留时长：已在括号中标注，用于判断用户关注度
-- UI坐标信息：已在交互中提供，可定位屏幕位置
-- 合并输入：连续输入已合并为单个序列，保留最终文本"""
-
-        # 应用特定增强
-        if "chrome" in app_package.lower() or "browser" in app_package.lower():
-            enhanced = base_template + "\n\n重点关注：搜索关键词、访问的URL、停留时长、页面切换"
-        elif "taobao" in app_package.lower() or "jd" in app_package.lower() or "amazon" in app_package.lower():
-            enhanced = base_template + "\n\n重点关注：浏览的商品名称、价格、是否加购/支付、商品名称"
-        elif "wechat" in app_package.lower() or "qq" in app_package.lower():
-            enhanced = base_template + "\n\n重点关注：发送消息的文本内容、互动的联系人或群组名称、分享的内容"
-        elif "meituan" in app_package.lower() or "eleme" in app_package.lower():
-            enhanced = base_template + "\n\n重点关注：最后下单商品的准确名称、搜索的餐厅名称、浏览的菜品名称、价格、下单操作"
-        else:
-            enhanced = base_template
-
-        # 第一次format: 填充app_name，{{{{ 变为 {{
-        return enhanced.format(app_name=self._get_app_display_name(app_package))
-
     def _get_app_display_name(self, app_package: str) -> str:
         """
         从包名获取应用显示名称

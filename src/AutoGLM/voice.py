@@ -222,42 +222,6 @@ class VoiceAssistant:
             print(f"语音识别出错: {e}")
             return None
 
-    def llm_process(self, text):
-        """LLM处理文本并生成回复"""
-        if not text:
-            return None
-
-        # 添加用户消息到对话记忆
-        self.messages.append({"role": "user", "content": text})
-
-        print("处理中...")
-        start_time = time.time()
-
-        response = self.client.chat.completions.create(
-            model="deepseek-chat", messages=self.messages, max_tokens=200
-        )
-        llm_time = time.time() - start_time
-
-        # 使用正则表达式过滤掉中英字符和标点符号外的所有字符
-        full_response = response.choices[0].message.content
-        # 保留中英文字符、数字、空格、中英文标点符号
-        filtered_response = re.sub(
-            r'[^\u4e00-\u9fa5a-zA-Z0-9\s\.,!?;:：，。！？；：""' "（）【】《》\\-\n]",
-            "",
-            full_response,
-        )
-        print(f"回复: {filtered_response}")
-        print(f"LLM耗时: {llm_time:.2f}秒")
-
-        # 添加助手回复到对话记忆
-        self.messages.append({"role": "assistant", "content": filtered_response})
-
-        # 限制对话记忆长度，避免上下文过长
-        if len(self.messages) > 10:  # 保留最近5轮对话（系统消息+5轮用户/助手对话）
-            self.messages = [self.messages[0]] + self.messages[-9:]
-
-        return filtered_response
-
     def speak(self, text: str) -> None:
         """
         文本转语音并播放
@@ -292,54 +256,9 @@ class VoiceAssistant:
             # 删除临时文件
             os.remove(temp_path)
 
-    def ask_question(self, question: str):
-        """主动向用户提问并等待回答的完整流程"""
-        print(f"助手: {question}")
-
-        # 语音合成并播放问题
-        self.speak(question)
-
-        # 等待用户回答
-        print("等待用户回答...")
-        audio_data = self.single_record()
-
-        # ASR转录用户回答
-        user_response = self.asr_transcribe(audio_data)
-        print(f"用户: {user_response}")
-        return user_response
-
     def listen_and_transcribe(self):
         """录音并转写文本"""
         audio_data = self.single_record()
         if audio_data:
             return self.asr_transcribe(audio_data)
         return None
-
-    def ask(self, question: str):
-        """主动向用户提问并获取回答"""
-        print(f"助手: {question}")
-
-        # 语音合成并播放问题
-        self.speak(question)
-
-        # 等待用户回答
-        print("等待用户回答...")
-        user_response = self.listen_and_transcribe()
-        print(f"用户: {user_response}")
-        return user_response
-
-    def get_conversation_history(self):
-        """
-        获取对话历史记录
-
-        Returns:
-            list: 对话消息列表
-        """
-        return self.messages
-
-    def clear_conversation_history(self) -> None:
-        """清空对话历史记录，仅保留系统消息"""
-        if len(self.messages) > 1:
-            system_message = self.messages[0]
-            self.messages = [system_message]
-            print("✅ 对话历史已清空")

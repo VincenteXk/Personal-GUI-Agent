@@ -641,46 +641,6 @@ class DataProcessor:
         # 使用共享配置中的应用名称映射
         self.app_name_mapping = APP_PACKAGE_MAPPINGS
 
-    def segment_into_sessions(self, events, session_timeout_seconds=300):
-        """将事件分割为会话"""
-        from src.learning.utils import generate_session_id
-
-        sessions = []
-        current_session = None
-
-        for event in events:
-            # 规范化时间戳格式：统一转换为 ISO + 'Z' 格式
-            timestamp_str = event["timestamp"]
-            # 移除多余的时区信息（如 +00:00Z 或 +00:00+00:00）
-            timestamp_str = timestamp_str.replace('+00:00', '')
-            timestamp_str = timestamp_str.rstrip('Z') + 'Z'  # 确保以单个Z结尾
-
-            event_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-
-            # 检查是否需要新会话
-            if (current_session is None or
-                (event_time - current_session["last_event_time"]).total_seconds() > session_timeout_seconds):
-
-                if current_session:
-                    sessions.append(current_session)
-
-                # 使用新的session_id格式：YYYYMMDD_HHMMSS_<short-id>
-                session_id = generate_session_id(event["timestamp"])
-
-                current_session = {
-                    "session_id": session_id,
-                    "start_time": event["timestamp"],
-                    "last_event_time": event_time,
-                    "events": [event]
-                }
-            else:
-                current_session["events"].append(event)
-                current_session["last_event_time"] = event_time
-
-        if current_session:
-            sessions.append(current_session)
-
-        return sessions
     
     def _should_filter_content_change(self, event: Dict[str, Any]) -> bool:
         """判断content_change事件是否应该被过滤
@@ -982,37 +942,7 @@ class DataProcessor:
                     activity["interactions"] = self._merge_consecutive_text_inputs(activity["interactions"])
 
         return app_sessions
-    
-    def get_ui_element_description(self, target):
-        """将UI元素转换为可读描述，简化规则，保留原始数据供LLM分析"""
-        # 优先使用文本内容
-        if target.get("text"):
-            return target["text"]
-        
-        # 其次使用内容描述
-        if target.get("content_desc"):
-            return target["content_desc"]
-        
-        # 最后使用资源ID，但简化处理，保留更多原始信息
-        if target.get("resource_id"):
-            # 只提取ID的最后部分，去除包名前缀
-            resource_id = target["resource_id"]
-            if ":" in resource_id:
-                resource_id = resource_id.split(":")[-1]
-            if "/" in resource_id:
-                resource_id = resource_id.split("/")[-1]
-            return resource_id
-        
-        # 如果都没有，返回类名的简化版本
-        if target.get("class"):
-            class_name = target["class"]
-            # 提取类名的最后部分
-            if "." in class_name:
-                class_name = class_name.split(".")[-1]
-            return class_name
-        
-        return "未知元素"
-    
+
     def generate_summary_text(self, app_sessions):
         """生成简化的自然语言摘要，保留更多结构化数据供LLM分析"""
         # P1 优化：包含时长信息
@@ -1346,67 +1276,6 @@ class DataProcessor:
 
         return search_events
 
-    def segment_into_app_sessions(self, session):
-        """
-        将Session分割为多个Application Session
-
-        分割规则:
-        1. 应用切换 → 新AppSession
-        2. 同一应用前后间隔>5分钟 → 新AppSession
-
-        返回: List[Application Session]
-        """
-        app_sessions = []
-
-        # 遍历当前Session中已经按应用分组的app_sessions
-        for app_data in session.get('app_sessions', []):
-            app_package = app_data.get('app_package', '')
-            app_name = app_data.get('app_name', '')
-            activities = app_data.get('activities', [])
-
-            if not activities:
-                continue
-
-            # 检查是否需要分割（同一应用的多次使用）
-            # 策略：如果activities之间有大于5分钟的间隔，则分割
-            sub_sessions = self.split_activities_by_gap(activities, gap_threshold_seconds=300)
-
-            for i, activity_group in enumerate(sub_sessions):
-                if not activity_group:
-                    continue
-
-                start_time = activity_group[0].get('start_time', '')
-                end_time = self._calculate_app_end_time(activity_group)
-
-                app_session = {
-                    "app_session_id": f"{app_package}_{start_time.replace(':', '-').replace('+', '_')}",
-                    "app_name": app_name,
-                    "app_package": app_package,
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "activities": activity_group,
-                    "screenshots": self._extract_screenshots_in_timerange(
-                        session, start_time, end_time
-                    )
-                }
-
-                # 计算时长
-                try:
-                    start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                    end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
-                    app_session['duration'] = (end_dt - start_dt).total_seconds()
-                except:
-                    app_session['duration'] = 0
-
-                # 计算交互次数
-                app_session['interactions_count'] = sum(
-                    len(act.get('interactions', [])) for act in activity_group
-                )
-
-                app_sessions.append(app_session)
-
-        return app_sessions
-
     def split_activities_by_gap(self, activities, gap_threshold_seconds=300):
         """
         按时间间隔分割Activity列表
@@ -1666,51 +1535,6 @@ class BehaviorAnalyzer:
             if not os.path.exists(dir_path):
                 os.makedirs(dir_path)
 
-    def prepare_for_vlm_batch(self, sessions):
-        """
-        为批量VLM分析准备数据
-
-        输入: List[Session] (可能是数十个Session)
-        输出: List[AppSessionVLMInput]
-
-        流程:
-        1. 遍历所有Session
-        2. 分割为Application Sessions
-        3. 为每个AppSession分配截图
-        4. 构建VLM输入格式
-        """
-        app_sessions_data = []
-
-        for session in sessions:
-            # 分割为Application Sessions
-            app_sessions = self.processor.segment_into_app_sessions(session)
-
-            for app_session in app_sessions:
-                # 为该AppSession分配截图
-                selected_screenshots = self.processor.allocate_screenshots_for_app_session(
-                    app_session, quota=8
-                )
-
-                # 构建VLM输入格式
-                activities_summary = self._build_activities_summary(app_session.get('activities', []))
-
-                vlm_input = {
-                    "app_session_id": app_session.get('app_session_id', ''),
-                    "app_name": app_session.get('app_name', ''),
-                    "app_package": app_session.get('app_package', ''),
-                    "start_time": app_session.get('start_time', ''),
-                    "end_time": app_session.get('end_time', ''),
-                    "duration": app_session.get('duration', 0),
-                    "activities_summary": activities_summary,
-                    "screenshots": selected_screenshots,
-                    "interactions": self._extract_interactions(app_session.get('activities', [])),
-                    "search_queries": self._extract_search_queries(app_session.get('activities', []))
-                }
-
-                app_sessions_data.append(vlm_input)
-
-        return app_sessions_data
-
     def _build_activities_summary(self, activities):
         """构建Activity摘要"""
         if not activities:
@@ -1747,24 +1571,6 @@ class BehaviorAnalyzer:
                         "time_offset": interaction.get('time_offset', 0)
                     })
         return search_queries
-
-    def get_all_sessions(self):
-        """获取所有已处理的Session"""
-        sessions = []
-        if not os.path.exists(self.sessions_dir):
-            return sessions
-
-        for filename in os.listdir(self.sessions_dir):
-            if filename.endswith('.json'):
-                filepath = os.path.join(self.sessions_dir, filename)
-                try:
-                    with open(filepath, 'r', encoding='utf-8') as f:
-                        session = json.load(f)
-                        sessions.append(session)
-                except:
-                    continue
-
-        return sessions
 
     def collect_and_process(self, duration_seconds: int = 60):
         """收集并处理数据，使用新的会话文件结构"""
@@ -1896,23 +1702,3 @@ class BehaviorAnalyzer:
 
         print(f"处理完成，结果已保存到 {session_folder}")
         return session_id, data_for_vlm
-    
-    def save_llm_data(self, session_data, filename=None, session_id=None):
-        """保存LLM数据到文件"""
-        if filename is None:
-            if session_id is not None:
-                filename = f"{session_id}_llm.json"
-            else:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"llm_data_{timestamp}.json"
-        
-        output_dir = os.path.join(self.output_dir, "processed")
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-        
-        file_path = os.path.join(output_dir, filename)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(session_data, f, indent=2, ensure_ascii=False)
-        
-        print(f"LLM数据已保存到: {file_path}")
-        return file_path

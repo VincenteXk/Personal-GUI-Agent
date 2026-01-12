@@ -31,9 +31,6 @@ from src.AutoGLM.voice import VoiceAssistant
 from src.learning.behavior_analyzer import BehaviorAnalyzer
 from src.learning.vlm_analyzer import VLMAnalyzer
 
-# 导入本地模块
-from src.core.refiner import InstructionRefiner
-
 class PersonalUI:
     """PersonalUI系统主类，整合所有功能模块"""
 
@@ -48,7 +45,6 @@ class PersonalUI:
         self.args = args
         # 加载配置并合并命令行参数
         self.config = self._load_and_merge_config(config_path)
-        self.refiner = InstructionRefiner(model_config=self._get_model_config())
         self.phone_agent = None
         self.behavior_analyzer = BehaviorAnalyzer()
         self.vlm_analyzer = None
@@ -237,11 +233,8 @@ class PersonalUI:
             voice_assistant = VoiceAssistant()
             print("🎤 语音模式已就绪！")
 
-        # 1. 使用InstructionRefiner优化指令
-        refined_task = self.refiner.refine_task(task)
-
-        # 2. 使用PhoneAgent执行任务
-        result = self.phone_agent.run(refined_task)
+        # 执行任务（跳过已删除的InstructionRefiner）
+        result = self.phone_agent.run(task)
         print(f"任务执行结果: {result}")
         
         # 如果是语音模式，将结果转换为语音播放
@@ -304,8 +297,7 @@ class PersonalUI:
 
             print()
             try:
-                refined_task = self.refiner.refine_task(task)
-                result = self.phone_agent.run(refined_task)
+                result = self.phone_agent.run(task)
                 print(f"\n结果: {result}\n")
                 
                 # 如果是语音模式，将结果转换为语音播放

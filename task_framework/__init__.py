@@ -7,7 +7,6 @@
 - 风险控制和决策
 """
 
-from .agent import TaskAgent, StepResult
 from .config import TaskAgentConfig
 from .context import TaskContext, TaskInfo, TaskState, ExecutionPlan
 from .interfaces import (
@@ -29,9 +28,6 @@ from .actions import (
 from .system_prompts import get_scheduler_system_prompt, get_messages
 
 __all__ = [
-    # 核心Agent
-    "TaskAgent",
-    "StepResult",
     # 配置
     "TaskAgentConfig",
     # 上下文

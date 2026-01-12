@@ -80,24 +80,6 @@ def format_duration(seconds: float) -> str:
         return f"{hours:.1f}小时"
 
 
-def copy_file(src: str, dst: str) -> bool:
-    """复制文件
-    
-    Args:
-        src: 源文件路径
-        dst: 目标文件路径
-        
-    Returns:
-        是否成功
-    """
-    try:
-        ensure_dir_exists(os.path.dirname(dst))
-        shutil.copy2(src, dst)
-        return True
-    except Exception:
-        return False
-
-
 def list_files_by_extension(dir_path: str, extension: str) -> List[str]:
     """列出目录中指定扩展名的所有文件
     
@@ -117,83 +99,6 @@ def list_files_by_extension(dir_path: str, extension: str) -> List[str]:
             files.append(os.path.join(dir_path, filename))
     
     return files
-
-
-def get_latest_file(dir_path: str, extension: str = None) -> Optional[str]:
-    """获取目录中最新修改的文件
-    
-    Args:
-        dir_path: 目录路径
-        extension: 文件扩展名（可选）
-        
-    Returns:
-        最新文件路径，没有则返回None
-    """
-    if not os.path.exists(dir_path):
-        return None
-    
-    files = []
-    for filename in os.listdir(dir_path):
-        if extension is None or filename.endswith(extension):
-            file_path = os.path.join(dir_path, filename)
-            files.append((file_path, os.path.getmtime(file_path)))
-    
-    if not files:
-        return None
-    
-    # 按修改时间排序，返回最新的
-    files.sort(key=lambda x: x[1], reverse=True)
-    return files[0][0]
-
-
-def is_valid_image_file(file_path: str) -> bool:
-    """检查是否为有效的图片文件
-    
-    Args:
-        file_path: 文件路径
-        
-    Returns:
-        是否为有效图片
-    """
-    try:
-        from PIL import Image
-        with Image.open(file_path) as img:
-            img.verify()
-        return True
-    except Exception:
-        return False
-
-
-def truncate_string(s: str, max_length: int = 100) -> str:
-    """截断字符串到指定长度
-    
-    Args:
-        s: 原字符串
-        max_length: 最大长度
-        
-    Returns:
-        截断后的字符串
-    """
-    if len(s) <= max_length:
-        return s
-    return s[:max_length-3] + "..."
-
-
-def safe_get(dictionary: Dict[str, Any], key: str, default: Any = None) -> Any:
-    """安全获取字典值
-
-    Args:
-        dictionary: 字典
-        key: 键名
-        default: 默认值
-
-    Returns:
-        字典值或默认值
-    """
-    try:
-        return dictionary.get(key, default)
-    except AttributeError:
-        return default
 
 
 def run_async(coro):

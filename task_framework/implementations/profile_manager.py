@@ -246,23 +246,3 @@ class GraphRAGProfileManager(ProfileManagerInterface):
         except Exception as e:
             print(f"写入场景偏好异常: {e}")
             raise
-
-    def _parse_preference_from_results(
-        self, results: list, scene_type: str
-    ) -> Optional[dict[str, Any]]:
-        """从查询结果解析场景偏好。"""
-        if not results:
-            return None
-
-        result = results[0]
-
-        if isinstance(result, dict):
-            props = result.get("properties", {})
-            return {
-                "scene_type": scene_type,
-                "preferences": json.loads(props.get("preferences", "{}")),
-                "confidence": float(props.get("confidence", 0.5)),
-                "is_temporary": props.get("is_temporary", "false").lower() == "true",
-            }
-
-        return None
