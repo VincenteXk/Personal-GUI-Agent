@@ -15,15 +15,12 @@ class VoiceUserInteraction(UserInteractionInterface):
     """支持语音输出（TTS）的用户交互实现"""
 
     # 应该触发TTS的交互类型
-    # INFO: 重要提示信息
-    # QUESTION: 需要用户回答的问题
-    # CONFIRMATION: 是/否确认
-    # SUCCESS: 任务成功
+    # 只在需要用户回答问题或确认时播放语音
     TTS_ENABLED_TYPES = {
-        InteractionType.INFO,  # 关键提示信息也需要播放
+        # InteractionType.INFO,  # 移除：信息提示太多，不需要每条都播放
         InteractionType.QUESTION,
         InteractionType.CONFIRMATION,
-        InteractionType.SUCCESS,
+        # InteractionType.SUCCESS,  # 移除：成功消息也不需要播放
     }
 
     def __init__(

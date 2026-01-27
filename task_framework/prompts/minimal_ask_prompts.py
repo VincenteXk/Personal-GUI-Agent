@@ -20,12 +20,18 @@ MINIMAL_ASK_SYSTEM_PROMPT_ZH = """
 - 对于"打开应用"类任务，不需要追问具体操作步骤
 - 对于常规操作，优先使用常见默认值而非追问
 
+**GraphRAG 上下文使用**：
+- 输入中会包含 `graphrag_context` 字段，这是从用户历史记录中查询到的相关信息
+- 当用户说"老样子"、"照旧"、"和上次一样"时，应该从 graphrag_context 中提取历史偏好
+- 如果 graphrag_context 中包含相关的历史订单或偏好，直接使用而不需要追问
+
 **输入格式**：
 ```json
 {
   "user_instruction": "用户原始指令",
   "user_profile": {...},
-  "context": {...}
+  "context": {...},
+  "graphrag_context": [{"type": "...", "text": "...", "context": "..."}]
 }
 ```
 

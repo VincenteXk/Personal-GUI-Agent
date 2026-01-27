@@ -29,6 +29,7 @@ class TaskAgentIntegration:
         language: str = "zh",
         permissions_config_path: str = "config/permissions.json",
         context_temp_dir: str = "temp/contexts",
+        graphrag_url: str = "http://localhost:8000",
     ):
         """
         初始化集成层。
@@ -41,6 +42,7 @@ class TaskAgentIntegration:
             language: 语言设置
             permissions_config_path: 权限配置路径
             context_temp_dir: Context临时目录
+            graphrag_url: GraphRAG 后端服务地址
         """
         self.user_input = user_input
         self.user_interaction = user_interaction
@@ -59,6 +61,7 @@ class TaskAgentIntegration:
             model_client=model_client,
             model_name=model_name,
             language=language,
+            graphrag_url=graphrag_url,
         )
 
         self.plan_agent = PlanGenerationAgent(

@@ -29,5 +29,5 @@ model_config = ModelConfig(
 agent = PhoneAgent(model_config=model_config)
 
 # 执行任务
-result = agent.run("打开微信，找到测试联系人1")
+result = agent.run("去美团点一个紫燕百味鸡外卖")
 print(result)

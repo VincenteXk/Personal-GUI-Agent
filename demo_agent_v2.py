@@ -13,8 +13,11 @@ from task_framework.implementations.profile_manager import GraphRAGProfileManage
 from dotenv import load_dotenv
 import os
 import sys
+import subprocess
 
 load_dotenv()
+subprocess.run(["adb", "shell", "settings", "put", "secure", "show_ime_with_hard_keyboard", "1"])
+subprocess.run(["adb", "shell", "ime", "enable", "com.android.adbkeyboard/.AdbIME"])
 
 
 def main():
@@ -36,7 +39,7 @@ def main():
         verbose=True,
         language="zh",
         voice_mode=True,  # 设置为True启用语音模式
-        enable_onboarding=True,
+        enable_onboarding=False,
         enable_minimal_ask=True,
         enable_plan_preview=True,
         enable_preference_update=True,

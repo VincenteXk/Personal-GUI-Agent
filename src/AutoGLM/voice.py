@@ -13,7 +13,8 @@ import pyaudio
 import webrtcvad
 import asyncio
 import edge_tts
-from playsound import playsound
+import pygame
+pygame.mixer.init()
 import io
 import re
 import tempfile
@@ -247,9 +248,13 @@ class VoiceAssistant:
             tts_time = time.time() - start_time
             print(f"TTS耗时: {tts_time:.2f}秒")
 
-            # 播放音频
+            # 播放音频 (使用 pygame.mixer 替代 playsound，避免 MCI 资源泄漏)
             start_time = time.time()
-            playsound(temp_path, block=True)
+            pygame.mixer.music.load(temp_path)
+            pygame.mixer.music.play()
+            while pygame.mixer.music.get_busy():
+                pygame.time.Clock().tick(10)
+            pygame.mixer.music.unload()  # 释放资源
             play_time = time.time() - start_time
             print(f"播放耗时: {play_time:.2f}秒")
 
